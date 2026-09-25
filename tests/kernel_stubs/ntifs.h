@@ -36,6 +36,7 @@ extern void** PsProcessType;
 extern void* MmHighestUserAddress;
 UCHAR KeGetCurrentIrql();
 NTSTATUS PsLookupProcessByProcessId(HANDLE, PEPROCESS*);
+extern "C" PVOID PsGetProcessSectionBaseAddress(PEPROCESS);
 NTSTATUS ZwOpenProcess(HANDLE*, ACCESS_MASK, OBJECT_ATTRIBUTES*, CLIENT_ID*);
 NTSTATUS ZwQueryObject(HANDLE, OBJECT_INFORMATION_CLASS, void*, ULONG, ULONG*);
 NTSTATUS ZwClose(HANDLE);

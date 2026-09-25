@@ -138,7 +138,7 @@ void FinishRead()
         if (result.axis != Axis::X) Text(YValue, FormatValue(result.yBits, result.valueType));
         StatusText(L"읽기 성공 · PID " + std::to_wstring(job->pid) + L" · " +
             std::to_wstring(result.bytesRead) + L" 바이트 · NTSTATUS 0x00000000");
-        LogLine(L"X = " + Text(XValue) + L" / Y = " + Text(YValue) + L" / 기준 주소 " + Hex(job->request.baseAddress));
+        LogLine(L"X = " + Text(XValue) + L" / Y = " + Text(YValue) + L" / 모듈 오프셋 " + Hex(job->request.baseAddress));
     }
     job.reset();
 }

@@ -41,7 +41,13 @@ void ExecuteDarkEdenRequest(const DarkEdenProtocol::Request& request,
     response.status = memory.InitializeForRequest(
         reinterpret_cast<HANDLE>(static_cast<ULONG_PTR>(request.processId)));
     if (!NT_SUCCESS(response.status)) return;
-    DispatchCoordinateRequest(memory, request, response);
+    Request resolved = request;
+    ULONG_PTR absoluteAddress = 0;
+    response.status = memory.ResolveImageOffset(
+        static_cast<ULONG_PTR>(request.baseAddress), &absoluteAddress);
+    if (!NT_SUCCESS(response.status)) return;
+    resolved.baseAddress = static_cast<UInt64>(absoluteAddress);
+    DispatchCoordinateRequest(memory, resolved, response);
 }
 
 // Use the confirmed absolute base address 0x009CB97C.

@@ -10,6 +10,8 @@ void ReadCoordinateRequest(const TMemory& memory, const DarkEdenProtocol::Reques
     using namespace DarkEdenProtocol;
     BasicDarkEdenCoordinateReader<TMemory, TPointer, TValue> reader(memory);
     response = {Version, sizeof(Response), STATUS_UNSUCCESSFUL, 0, request.axis, request.valueType, 0, 0};
+    // The transport entry resolves the module-relative offset before calling
+    // this helper. Fake-memory tests may continue to pass absolute addresses.
     const auto base = static_cast<ULONG_PTR>(request.baseAddress);
     if (static_cast<UInt64>(base) != request.baseAddress)
     {

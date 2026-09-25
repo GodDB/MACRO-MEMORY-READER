@@ -1,5 +1,8 @@
 #include "KernelProcessMemoryReader.h"
 
+// Exported by the Windows kernel but not declared by the WDK headers.
+extern "C" PVOID PsGetProcessSectionBaseAddress(PEPROCESS Process);
+
 KernelProcessMemoryReader::~KernelProcessMemoryReader() noexcept
 {
     NT_ASSERT(KeGetCurrentIrql() == PASSIVE_LEVEL);
@@ -89,6 +92,21 @@ NTSTATUS KernelProcessMemoryReader::InitializeForRequest(HANDLE processId) noexc
         return status;
     }
     process_ = process;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS KernelProcessMemoryReader::ResolveImageOffset(
+    ULONG_PTR offset, ULONG_PTR* address) const noexcept
+{
+    if (address == nullptr || KeGetCurrentIrql() != PASSIVE_LEVEL || process_ == nullptr)
+        return STATUS_INVALID_DEVICE_STATE;
+    const ULONG_PTR imageBase = reinterpret_cast<ULONG_PTR>(
+        PsGetProcessSectionBaseAddress(process_));
+    const ULONG_PTR highestUserAddress = reinterpret_cast<ULONG_PTR>(MmHighestUserAddress);
+    if (imageBase == 0 || imageBase > highestUserAddress ||
+        offset > highestUserAddress - imageBase)
+        return STATUS_INTEGER_OVERFLOW;
+    *address = imageBase + offset;
     return STATUS_SUCCESS;
 }
 

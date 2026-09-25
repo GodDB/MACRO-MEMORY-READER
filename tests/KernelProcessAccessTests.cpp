@@ -8,6 +8,7 @@ struct State {
     NTSTATUS openStatus = STATUS_SUCCESS, queryStatus = STATUS_SUCCESS;
     NTSTATUS referenceStatus = STATUS_SUCCESS, imageStatus = STATUS_SUCCESS;
     ULONG access = 0x1010, queryLength = sizeof(PUBLIC_OBJECT_BASIC_INFORMATION);
+    ULONG_PTR imageBase = 0x140000000ULL;
     int opens = 0, closes = 0, references = 0, releases = 0, frees = 0, lookups = 0;
     const WCHAR* image = L"C:\\fixture\\darkeden.exe";
 } state;
@@ -21,6 +22,8 @@ void* MmHighestUserAddress = reinterpret_cast<void*>(0x7FFFFFFFFFFFULL);
 UCHAR KeGetCurrentIrql() { return state.irql; }
 NTSTATUS PsLookupProcessByProcessId(HANDLE, PEPROCESS*)
 { ++state.lookups; return STATUS_UNSUCCESSFUL; }
+PVOID PsGetProcessSectionBaseAddress(PEPROCESS process)
+{ assert(process == &object); return reinterpret_cast<PVOID>(state.imageBase); }
 NTSTATUS ZwOpenProcess(HANDLE* handle, ACCESS_MASK access, OBJECT_ATTRIBUTES* a, CLIENT_ID* id)
 {
     ++state.opens;
@@ -78,6 +81,9 @@ int main()
     {
         KernelProcessMemoryReader reader;
         assert(reader.InitializeForRequest(testPid) == STATUS_SUCCESS);
+        ULONG_PTR resolved = 0;
+        assert(reader.ResolveImageOffset(0x009CB97C, &resolved) == STATUS_SUCCESS);
+        assert(resolved == state.imageBase + 0x009CB97C);
         assert(reader.InitializeForRequest(testPid) == STATUS_INVALID_DEVICE_STATE);
         assert(state.opens == 1 && state.closes == 1 && state.references == 1 && state.releases == 0);
         assert(state.lookups == 0 && state.frees == 1);
@@ -118,7 +124,12 @@ int main()
     { KernelProcessMemoryReader reader; assert(reader.InitializeForRequest(testPid) == STATUS_OBJECT_NAME_INVALID); }
     assert(state.closes == 1 && state.releases == 1 && state.frees == 1);
     state = {}; state.image = L"C:\\fixture\\DARKEDEN.EXE";
-    { KernelProcessMemoryReader reader; assert(reader.InitializeForRequest(testPid) == STATUS_SUCCESS); }
+    { KernelProcessMemoryReader reader;
+        assert(reader.InitializeForRequest(testPid) == STATUS_SUCCESS);
+        state.imageBase = 0;
+        ULONG_PTR resolved = 0;
+        assert(reader.ResolveImageOffset(0x009CB97C, &resolved) == STATUS_INTEGER_OVERFLOW);
+    }
     assert(state.closes == 1 && state.releases == 1);
     std::cout << "Kernel process access and cleanup tests passed (mock APIs).\n";
 }

@@ -9,6 +9,7 @@ using ULONG = std::uint32_t;
 using ULONGLONG = std::uint64_t;
 using ULONG_PTR = std::uintptr_t;
 using HANDLE = void*;
+using PVOID = void*;
 using PEPROCESS = void*;
 #define _IRQL_requires_(level)
 #define NT_SUCCESS(status) ((status) >= 0)

@@ -76,7 +76,7 @@ Get-Process -Name darkeden | Select-Object Id, ProcessName
 ## x·y 좌표 읽기
 
 `DarkEdenCoordinateReader.h`에 좌표 읽기 기능을 추가했습니다.
-사용자가 확인한 기준은 **절대 주소 `0x009CB97C`**입니다.
+사용자가 확인한 기준은 **darkeden.exe 모듈 기준 오프셋 `0x009CB97C`**입니다.
 `ReadAllDarkEdenCoordinates(memory)`는 32비트/64비트 포인터 경로를 각각
 추적하고, 각 좌표를 4바이트 정수와 float로 해석한 네 결과를 반환합니다.
 같은 포인터 경로의 정수/실수 결과는 한 번 읽은 동일한 바이트에서 만듭니다.
@@ -125,13 +125,13 @@ LONG x = result.value.x;
 LONG y = result.value.y;
 ```
 
-`ReadFromModule`의 `moduleBase`는 실행 중인 darkeden.exe 모듈의 실제 시작
-주소이며 호출자가 제공해야 합니다. 클래스가 모듈을 자동으로 찾지는 않습니다.
-현재 확인된 주소는 절대 주소이므로 `ReadFromModule` 대신 `Read()`를 사용합니다.
+저수준 좌표 reader의 `ReadFromModule`은 테스트용으로 모듈 베이스를 직접 받습니다.
+GUI IOCTL 경로에서는 드라이버가 실행 중인 darkeden.exe 이미지 베이스를 Ring0에서
+확인하고 오프셋을 더하므로 GUI가 모듈을 열거나 열거하지 않습니다.
 
 개별 좌표는 `ReadX(baseAddress)`, `ReadY(baseAddress)`로 읽습니다.
 이 두 함수와 `Read(baseAddress)`의 주소 기본값은 `0x009CB97C`입니다.
-다른 주소를 지정할 때에는 **첫 번째 포인터가 저장된 절대 주소**를 전달합니다.
+다른 주소를 지정할 때에는 **첫 번째 포인터가 저장된 모듈 기준 오프셋**을 전달합니다.
 마지막 오프셋에서는 포인터를 한 번 더 역참조하지 않습니다.
 
 `Read`는 공통 포인터 경로를 한 번 따라간 후 연속된 x·y 8바이트를 함께

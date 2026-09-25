@@ -22,7 +22,7 @@ struct Request
     UInt32 version;
     UInt32 size;
     UInt64 processId;     // PID only; the driver opens and owns the process handle.
-    UInt64 baseAddress;   // Absolute address of the first pointer slot.
+    UInt64 baseAddress;   // Module-relative offset of the first pointer slot.
     Axis axis;
     UInt32 pointerBytes;
     ValueType valueType;

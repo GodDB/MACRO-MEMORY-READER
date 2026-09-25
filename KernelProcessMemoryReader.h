@@ -53,6 +53,10 @@ public:
     _IRQL_requires_(PASSIVE_LEVEL)
     NTSTATUS InitializeForRequest(HANDLE processId) noexcept;
 
+    // Resolve an offset from the referenced process image in kernel mode.
+    _IRQL_requires_(PASSIVE_LEVEL)
+    NTSTATUS ResolveImageOffset(ULONG_PTR offset, ULONG_PTR* address) const noexcept;
+
     template <typename T>
     _IRQL_requires_(PASSIVE_LEVEL)
     MemoryReadResult<T> Read(ULONG_PTR address) const noexcept

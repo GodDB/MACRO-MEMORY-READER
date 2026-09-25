@@ -74,10 +74,11 @@ GUI는 실행 중인 `darkeden.exe` 목록을 표시합니다. 여러 개면 PID
 X/Y 단독 요청은 해당 좌표 4바이트만, 둘 다 요청은 인접한 8바이트를 읽습니다.
 32/64비트 포인터 및 int32/float32 좌표를 선택할 수 있습니다.
 
-기본값은 기존 코드와 동일하게 **절대 주소 `0x009CB97C`, 32비트 포인터, int32**입니다.
+기본값은 **darkeden.exe 모듈 기준 오프셋 `0x009CB97C`, 32비트 포인터, int32**입니다.
 게임 버전과 실제 메모리 구조에 맞는지 확인해야 합니다. 기준 주소는 항상 16진수입니다.
 
 ```text
+baseAddress = darkeden.exe image base + 0x009CB97C
 p1 = readPointer(baseAddress)
 p2 = readPointer(p1 + 0xC)
 p3 = readPointer(p2 + 0x44)
