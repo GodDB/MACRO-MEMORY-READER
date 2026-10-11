@@ -1,4 +1,165 @@
-# Windows 커널 메모리 읽기 및 좌표 GUI
+# Windows 커널 메모리 읽기 및 Python 값 API
+
+## 주변 캐릭터 목록 포인터 (2026-10-11)
+
+Cheat Engine Lua Engine에서 `dofile([[C:\Users\Administrator\Desktop\MACRO\auto_nearby.lua]])`를 실행하면
+현재 주변 캐릭터의 이름, X, Y, ID 및 객체 주소를 출력합니다. 읽기 전용입니다.
+
+32비트 게임의 모듈 기준 경로는 다음과 같습니다.
+
+```text
+manager = read32(darkeden.exe + 0x00AB31D0)
+header  = read32(manager + 0x34)
+root    = read32(header + 0x04)
+```
+
+`root`부터 왼쪽 자식 `node+0x00`, 오른쪽 자식 `node+0x08`을 순회합니다.
+`header`는 빈 자식의 센티널이며, `node+0x04`는 부모 포인터입니다.
+각 노드에서 `read32(node+0x14)`가 캐릭터 객체이고, `node+0x10`은 ID입니다.
+객체의 `+0x08`은 ID, `+0x0C`와 `+0x0E`는 각각 2바이트 X/Y 좌표입니다.
+유저 ID는 맵에 따라 `0xFFFF`를 넘으므로 16비트 상한으로 거르지 않습니다.
+이 필터를 제거한 뒤 다른 맵에서 `코요타`, `비빔`, 본인 `helloworl`을
+포함한 26개 항목의 이름과 좌표를 실제 게임에서 확인했습니다.
+이름은 ID와 함께 저장된 길이 지정 ASCII 문자열에서 찾습니다.
+
+게임 재시작 전후에 같은 모듈 경로로 `dongbeom`, `heroman`, `mobility`, `crazyfuc`
+네 캐릭터를 다시 읽어 확인했습니다. 중간 주소와 `crazyfuc` ID는 재시작 시 바뀌었습니다.
+
+Python 앱에서도 `list_nearby_characters(pid)`로 현재 목록을 읽을 수 있습니다.
+반환값은 `[{"name": "dongbeom", "race": "Vampire", "id": 12039, "x": 52, "y": 50}, ...]`
+형식이며, GUI의 **주변 캐릭터 → 목록 새로고침** 버튼에서 이름·종족·X·Y·ID를
+표시합니다. 경로는 `Python → C++ DLL → DarkEdenReader 드라이버`입니다.
+일반 캐릭터 이름은 객체의 `+0x544` 포인터가 가리키는 문자열이고, 이 포인터가
+비어 있는 본인 캐릭터는 기존 본인 이름 경로에서 읽습니다. 이름 경로가 모두
+비어 있으면 `ID_...`로 표시합니다. 드라이버가 실행 중이어야 앱에서 읽을 수 있습니다.
+종족은 객체의 `+0x558`, `+0x610` 값을 함께 읽어, 관찰된 조합
+`(0x42, 0)=Ousters`, `(0, 2)=Vampire`, `(0x63, 0)=Slayer`만 표시합니다.
+다른 조합은 `미확인`입니다. `heroman`·`hellow`(Ousters),
+`dongbeom`·`mobility`(Vampire), `companion`(Slayer)으로 실제 조회를 확인했습니다.
+2026-10-11 재빌드 후 `DarkEdenReader` 실행과 GUI 실행을 확인했습니다.
+당시 게임 프로세스가 실행 중이지 않아 실제 게임 목록 조회는 아직 검증하지
+못했습니다. C++ 엔진 DLL 빌드와 Python 응답 처리 검사는 통과했습니다.
+
+## Python API와 테스트 화면 (2026-10-10)
+
+현재 사용 경로는 `Python → C++ DLL → 커널 드라이버`입니다. Python에서는
+`read_value(타입, pid)` 함수 하나로 내 X/Y좌표, 내 캐릭터명, 상대방 이름과 현재 좌표를 읽습니다.
+
+```python
+from python.darkeden import ValueType, read_value
+
+x = read_value(ValueType.X)                  # int
+y = read_value(ValueType.Y)                  # int
+name = read_value(ValueType.CHARACTER_NAME) # str
+other = read_value(ValueType.OTHER_CHARACTER_NAME) # str
+other_xy = read_value(ValueType.OTHER_CHARACTER_COORDINATES) # "X, Y"
+```
+
+`pid`를 생략하면 실행 중인 `darkeden.exe`가 정확히 하나일 때 자동 선택합니다.
+여러 개면 `read_value(ValueType.X, pid=1234)`처럼 PID를 지정합니다.
+타입 ID는 C++의 `DE_ReadValue` 함수에서 분기하며, 새 타입은 그 함수와 Python의
+`ValueType` 열거형에 추가할 수 있습니다.
+
+빌드: `scripts\Build-Engine.ps1 -ToolchainRoot <MSVC/SDK toolchain 경로>` 및
+`scripts\Build-Driver.ps1 -ToolchainRoot <MSVC/WDK toolchain 경로>`.
+테스트 GUI: `scripts\Run-Gui.ps1` 또는 `python python\gui.py`.
+기존 C++ GUI는 솔루션의 기본 빌드 대상에서 제외했습니다.
+
+캐릭터명은 CE 화면의 `darkeden.exe+000A8B14`에서 32비트 포인터를 읽고,
+그 포인터가 가리키는 `+0` 위치에서 최대 256바이트를 NUL까지 읽습니다.
+UTF-8을 우선 해석하고, 실패하면 CP949를 사용합니다. UTF-16LE 문자열로
+보이는 짧은 응답은 재조회합니다. CE 화면의 `0158CB88`은 해당 실행 시점의
+주소이므로 코드에 고정하지 않았습니다. 새 문자열 명령을 사용하려면
+새 드라이버를 서명하고 적용해야 합니다. 현재 실제 게임에서 캐릭터명 값은
+아직 확인하지 않았습니다.
+
+상대방 이름은 CE 화면의 `darkeden.exe+00AB31D0`에서 시작해 32비트 포인터를
+`34 → 0 → 14 → 544` 순서로 따라간 뒤 마지막 주소의 `+0`에 있는
+문자열로 읽습니다. 단일 값 API는 트리의 맨 왼쪽 캐릭터를 반환하고,
+`list_nearby_characters()`는 트리 전체를 순회합니다. 화면의 최종 주소
+`295E6740`은 코드에 고정하지 않았습니다.
+상대방 현재 좌표는 같은 루트에서 `34 → 0 → 14`를 따라간 객체의 `+0x0C`와
+`+0x0E`를 각각 2바이트로 읽습니다. `+0x4C0/+0x4C2`는 이동 목표 좌표로
+관찰되어 현재 좌표 표시에는 사용하지 않습니다. GUI에서 자동 갱신을 켜면
+200ms 간격으로 두 값을 한 번의 드라이버 요청으로 조회합니다.
+
+## 현재 X/Y 조회 (2026-10-10)
+
+GUI 기본 모드 '내 좌표 X / Y (32비트)'에서 X, Y, 둘 다 조회를 지원합니다.
+- X: p1 = read32(imageBase + 0x009FB03C); p2 = read32(p1 + 4); p3 = read32(p2 + 0xA8); X = readInt32(p3 + 0x20C).
+- Y: p1 = read32(imageBase + 0x009DF9A8); p2 = read32(p1 + 0xC); p3 = read32(p2 + 0x44); Y = readInt32(p3 + 0x210).
+CE의 오프셋은 16진수로 해석합니다. X의 실제 추적 순서는 4 → A8 → 20C이며 Y는 C → 44 → 210입니다.
+CE 화면의 최종 주소 2D6707B4와 값 32는 해당 실행 시점의 예시이며 프로그램에 고정하지 않습니다.
+X 시작 오프셋은 화면 입력값을 사용하고 Y 시작 오프셋은 위 경로로 고정합니다.
+두 좌표 요청은 X와 Y를 순서대로 별도 IOCTL로 읽으므로 원자적 스냅샷은 아닙니다.
+한쪽이라도 실패하면 좌표 쌍을 표시하지 않고 실패한 축의 오류를 표시합니다.
+기존 직접 읽기와 옛 32/64비트 좌표 경로는 선택 가능한 모드로 유지합니다.
+X 요청은 reserved=3, pointerBytes=4, axis=X이며 GUI와 드라이버를 함께 갱신해야 합니다. 기존 reserved=1 단일 포인터 요청의 의미는 유지하여 이전 드라이버가 새 X 경로를 잘못 해석하지 않게 합니다.
+Y 요청은 reserved=4, pointerBytes=4, axis=Y 경로를 사용합니다. 이전 reserved=2 경로는 호환용으로 남겨두었습니다.
+진단 도구는 ReadDirectValue.exe <PID> --x로 X만, --xy로 X/Y를 조회합니다. --single은 --x의 호환 별칭입니다.
+검증: GUI, 엔진, 드라이버 빌드 및 회귀 테스트 통과. Y 경로는 첨부 화면의 포인터 주소와 값 141을 재현한 메모리 테스트로 확인했습니다. 새 드라이버의 설치 및 실제 게임 좌표값은 아직 확인하지 않았습니다.
+아래 단일 X 모드 설명은 이전 변경 이력입니다.
+
+
+## X좌표 경로 적용 (2026-09-27)
+
+최신 CE 화면에 맞춰 기본 X 시작 오프셋을 0x001B6068로 변경했습니다.
+X = readInt32(readUInt32(darkeden.exe 이미지 베이스 + 0x001B6068) + 0).
+화면의 최종 주소 016A3868 및 값 48은 해당 실행 시점의 결과이며 코드에 고정하지 않습니다.
+단일 포인터 모드의 결과와 요청 버튼을 X좌표로 표시합니다. Y 경로는 아직 미확인입니다.
+기존 단일 포인터 지원 드라이버를 그대로 사용하며 GUI와 진단 도구만 다시 빌드합니다.
+아래 0x001BD6B0 관련 내용은 이전 경로 기록입니다.
+
+
+## 단일 포인터 모드 (2026-09-27)
+
+CE 화면에서 확인한 시작점 darkeden.exe + 0x001BD6B0에서 32비트 포인터를
+한 번 읽고, 그 주소 + 0에서 4바이트를 읽는 모드를 GUI 기본값으로 적용했습니다.
+자료형 기본값은 int32이며 float32도 선택할 수 있습니다. Y 주소는 미확인으로
+이 모드에서는 Y/둘 다 요청을 제공하지 않습니다.
+프로토콜 v2의 reserved=1, pointerBytes=4, axis=X 조합으로 요청합니다.
+이전 드라이버는 이 요청을 거부하므로 새 GUI와 새 드라이버가 모두 필요합니다.
+GUI/드라이버 빌드 및 세 회귀 테스트가 통과했습니다. 테스트 서명 Valid 확인.
+게임 실행 중 새 드라이버 시작은 오류 647로 실패했습니다. 게임 정상 종료 후
+scripts\Test-Environment.ps1 -OpenGui로 시작 및 실측을 이어서 확인해야 합니다.
+
+
+## 현재 기본 읽기 방식 (2026-09-27)
+
+GUI 기본값을 **32비트 포인터 경로 / int32 / 시작 오프셋 0x009CB97C**로 복원했습니다.
+드라이버가 darkeden.exe 이미지 베이스에 시작 오프셋을 더한 뒤,
+포인터를 읽어 C → 44 → 214(X)/218(Y) 경로를 추적합니다.
+기존 드라이버가 이 경로를 지원하므로 GUI만 다시 빌드하며 드라이버 교체는 필요 없습니다.
+직접 값 읽기는 선택 가능한 보조 모드로 유지합니다. 이 모드에서 0x9E3868을 읽으려면
+읽기 방식과 오프셋을 직접 바꾸세요. 모드 전환 시 오프셋이 자동 변경되지는 않습니다.
+이 기본 경로의 실제 게임 주소 유효성은 별도로 확인해야 합니다.
+
+아래 직접 읽기 추가 및 설치 기록은 변경 이력입니다.
+
+
+## 직접 값 읽기 추가 (2026-09-27)
+
+GUI 기본 모드는 **직접 값 읽기**, 기본 모듈 오프셋은 **0x009E3868**입니다.
+`darkeden.exe` 이미지 베이스에 입력 오프셋을 더한 위치에서 정확히 4바이트를
+한 번 읽습니다. 포인터 역참조 및 기존 C → 44 → 214/218 경로는 사용하지 않습니다.
+자료형은 CE의 Type과 맞춰 int32 또는 float32를 선택하고 **값 읽기 (4바이트)**를 누릅니다.
+Y 위치는 아직 확인되지 않아 직접 모드에서는 Y/둘 다 버튼을 비활성화합니다.
+
+기존 포인터 경로는 읽기 방식에서 32/64비트 포인터 경로를 선택하면 사용할 수 있습니다.
+오프셋은 자동 전환되지 않으므로 기존 경로를 사용할 때는 해당 시작 오프셋을 입력하세요.
+프로토콜 v2의 요청 크기는 유지하며, 기존에 거부하던 pointerBytes=0을 직접 읽기로
+확장했습니다. 이전 드라이버는 이 요청을 거부하므로 GUI와 드라이버 모두 다시 빌드하고
+새 드라이버를 서명·로드해야 합니다. 기존 프로세스 접근 권한 검사는 유지됩니다.
+
+이번 PC에서 MSVC GUI/드라이버 빌드와 세 회귀 테스트 실행이 통과했습니다.
+개발용 서명(Windows 검증 Valid), 인증서 신뢰 등록, DarkEdenReader 수동 시작 서비스 등록,
+TESTSIGNING 부팅 설정을 완료했습니다. 현재는 재부팅 대기이며 실제 드라이버 읽기는 미검증입니다.
+재부팅 후 관리자 PowerShell에서 `scripts\Test-Environment.ps1 -OpenGui`를 실행하면
+자체 메모리 통합 검사, 실행 중 게임의 직접 값 조회, GUI 열기를 수행합니다.
+세부 설치 결과는 `build\driver\Release\test-setup-result.json`에 있습니다.
+
+아래의 과거 빌드·서명·실행 기록은 이번 직접 읽기 변경의 검증 결과가 아닙니다.
+
 
 Windows GUI와 WDM 드라이버를 추가했습니다. **실행·빌드·설치 절차는 [GUI-DRIVER.md](GUI-DRIVER.md)**를 확인하세요.
 `DarkEdenMemoryReader.sln`에서 GUI와 드라이버를 빌드할 수 있습니다.

@@ -10,7 +10,11 @@ try {
     $source = Join-Path $projectRoot 'build\driver\Release\DarkEdenReader.sys'
     if ((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash) { throw 'Installed driver differs from the current build. Deploy the signed build first.' }
     $signature = Get-AuthenticodeSignature -LiteralPath $binary
-    if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne '313CA2F1B0EE2F9F8D96996B66B37058D2495BD3') { throw 'Driver signature is not trusted or the signer differs.' }
+    $sourceSignature = Get-AuthenticodeSignature -LiteralPath $source
+    if ($signature.Status -ne 'Valid' -or $sourceSignature.Status -ne 'Valid' -or
+        $signature.SignerCertificate.Thumbprint -ne $sourceSignature.SignerCertificate.Thumbprint) {
+        throw 'Driver signature is not trusted or the signer differs.'
+    }
     $service = Get-Service DarkEdenReader
     if ($service.Status -ne 'Running') {
         $output = & sc.exe start DarkEdenReader 2>&1

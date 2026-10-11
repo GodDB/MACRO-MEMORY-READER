@@ -184,7 +184,7 @@ inline bool ValidResponse(const DarkEdenProtocol::Request& request,
     using namespace DarkEdenProtocol;
     if (bytes != sizeof(Response) || response.version != Version || response.size != sizeof(Response) ||
         response.axis != request.axis || response.valueType != request.valueType) return false;
-    const uint32_t expected = request.axis == Axis::Both ? 8 : 4;
+    const uint32_t expected = request.reserved == 5 ? 4 : request.axis == Axis::Both ? 8 : 4;
     if (response.bytesRead > expected || (response.status >= 0 && response.bytesRead != expected)) return false;
     if (response.status < 0 && (response.xBits != 0 || response.yBits != 0)) return false;
     if (request.axis == Axis::X && response.yBits != 0) return false;
@@ -209,7 +209,7 @@ inline bool Read(DWORD pid, DarkEdenProtocol::Request request,
         const DWORD code = GetLastError();
         error = L"드라이버 통신 실패.\r\n" + WindowsError(code);
         if (code == ERROR_REVISION_MISMATCH || code == ERROR_INVALID_PARAMETER)
-            error += L"\r\nGUI와 드라이버를 모두 프로토콜 v2 빌드로 맞추세요. 이전 드라이버는 PID 요청을 지원하지 않습니다.";
+            error += L"\r\nGUI와 드라이버를 모두 최신 빌드로 맞추세요. 이전 드라이버는 선택한 읽기 방식을 지원하지 않을 수 있습니다.";
         return false;
     }
     if (!ValidResponse(request, response, returned))
@@ -221,6 +221,72 @@ inline bool Read(DWORD pid, DarkEdenProtocol::Request request,
         return false;
     }
     return true;
+}
+
+// Two independent reads: both values are published only if both succeed.
+// This does not provide an atomic X/Y snapshot.
+template <typename TRead>
+bool ReadPlayerCoordinatesWith(TRead read, DWORD pid, DarkEdenProtocol::Request request,
+                               DarkEdenProtocol::Response& response, std::wstring& error)
+{
+    using namespace DarkEdenProtocol;
+    response = {};
+    error.clear();
+    if (request.axis != Axis::X && request.axis != Axis::Y && request.axis != Axis::Both)
+    { error = L"Invalid coordinate axis."; return false; }
+    Response combined{Version, sizeof(Response), 0, 0, request.axis, request.valueType, 0, 0};
+    for (const auto axis : {Axis::X, Axis::Y})
+    {
+        if (request.axis != Axis::Both && request.axis != axis) continue;
+        Request part = request;
+        part.axis = axis;
+        part.pointerBytes = 4;
+        part.reserved = axis == Axis::X ? 3u : 4u;
+        part.baseAddress = axis == Axis::X ? request.baseAddress : DefaultYOffset;
+        Response result{};
+        if (!read(pid, part, result, error))
+        { error = (axis == Axis::X ? L"X: " : L"Y: ") + error; return false; }
+        combined.bytesRead += result.bytesRead;
+        if (axis == Axis::X) combined.xBits = result.xBits;
+        else combined.yBits = result.yBits;
+    }
+    response = combined;
+    return true;
+}
+
+inline bool ReadText(DWORD pid, DarkEdenProtocol::TextRequest request,
+                     DarkEdenProtocol::TextResponse& response, std::wstring& error)
+{
+    using namespace DarkEdenProtocol;
+    response = {};
+    request.processId = pid;
+    if (!ValidTextRequest(request)) { error = L"유효하지 않은 문자열 요청입니다."; return false; }
+    Handle device(CreateFileW(DevicePath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+    if (!device) { error = DeviceError(GetLastError()); return false; }
+    DWORD returned = 0;
+    if (!DeviceIoControl(device.get(), DarkEdenProtocol::ReadText, &request, sizeof(request),
+        &response, sizeof(response), &returned, nullptr))
+    {
+        error = L"문자열 읽기 통신 실패. 새 드라이버가 설치되어 있는지 확인하세요. " + WindowsError(GetLastError());
+        return false;
+    }
+    if (returned != sizeof(response) || response.version != Version ||
+        response.size != sizeof(response) || response.bytesRead > sizeof(response.data) ||
+        response.bytesRead % request.characterBytes != 0 || response.terminated > 1)
+    { response = {}; error = L"문자열 응답 형식이 올바르지 않습니다."; return false; }
+    if (response.status < 0)
+    {
+        error = StatusMessage(response.status) + L" NTSTATUS " + Hex(static_cast<uint32_t>(response.status));
+        return false;
+    }
+    return true;
+}
+
+inline bool ReadPlayerCoordinates(DWORD pid, DarkEdenProtocol::Request request,
+                                  DarkEdenProtocol::Response& response, std::wstring& error)
+{
+    return ReadPlayerCoordinatesWith(Read, pid, request, response, error);
 }
 
 inline std::wstring FormatValue(uint32_t bits, DarkEdenProtocol::ValueType type)

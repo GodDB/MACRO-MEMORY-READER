@@ -6,6 +6,7 @@ using NTSTATUS = std::int32_t;
 using SIZE_T = std::size_t;
 using LONG = std::int32_t;
 using ULONG = std::uint32_t;
+using USHORT = std::uint16_t;
 using ULONGLONG = std::uint64_t;
 using ULONG_PTR = std::uintptr_t;
 using HANDLE = void*;

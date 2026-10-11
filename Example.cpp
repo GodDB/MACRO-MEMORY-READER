@@ -1,5 +1,6 @@
 #include "Example.h"
 #include "CoordinateRequest.h"
+#include "TextRequest.h"
 
 // Call from driver code at PASSIVE_LEVEL. PID/address come from the caller.
 // This is an integration example, not a standalone driver entry point.
@@ -48,6 +49,28 @@ void ExecuteDarkEdenRequest(const DarkEdenProtocol::Request& request,
     if (!NT_SUCCESS(response.status)) return;
     resolved.baseAddress = static_cast<UInt64>(absoluteAddress);
     DispatchCoordinateRequest(memory, resolved, response);
+}
+
+void ExecuteDarkEdenTextRequest(const DarkEdenProtocol::TextRequest& request,
+                                DarkEdenProtocol::TextResponse& response) noexcept
+{
+    using namespace DarkEdenProtocol;
+    response = {};
+    response.version = Version;
+    response.size = sizeof(TextResponse);
+    response.status = STATUS_INVALID_PARAMETER;
+    if (!ValidTextRequest(request)) return;
+    KernelProcessMemoryReader memory;
+    response.status = memory.InitializeForRequest(
+        reinterpret_cast<HANDLE>(static_cast<ULONG_PTR>(request.processId)));
+    if (!NT_SUCCESS(response.status)) return;
+    ULONG_PTR slot = 0;
+    response.status = memory.ResolveImageOffset(static_cast<ULONG_PTR>(request.baseAddress), &slot);
+    if (!NT_SUCCESS(response.status)) return;
+    if (request.reserved == 1)
+        ReadOtherCharacterText(memory, slot, request.characterBytes, response);
+    else
+        ReadPointedText(memory, slot, request.characterBytes, response);
 }
 
 // Use the confirmed absolute base address 0x009CB97C.

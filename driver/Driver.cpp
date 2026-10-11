@@ -52,10 +52,13 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT, PIRP irp)
 {
     using namespace DarkEdenProtocol;
     const auto stack = IoGetCurrentIrpStackLocation(irp);
-    if (stack->Parameters.DeviceIoControl.IoControlCode != ReadCoordinates)
+    const auto command = stack->Parameters.DeviceIoControl.IoControlCode;
+    if (command != ReadCoordinates && command != ReadText)
         return Complete(irp, STATUS_INVALID_DEVICE_REQUEST);
-    if (stack->Parameters.DeviceIoControl.InputBufferLength != sizeof(Request) ||
-        stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(Response) ||
+    const ULONG requestSize = command == ReadText ? sizeof(TextRequest) : sizeof(Request);
+    const ULONG responseSize = command == ReadText ? sizeof(TextResponse) : sizeof(Response);
+    if (stack->Parameters.DeviceIoControl.InputBufferLength != requestSize ||
+        stack->Parameters.DeviceIoControl.OutputBufferLength < responseSize ||
         irp->AssociatedIrp.SystemBuffer == nullptr)
         return Complete(irp, STATUS_BUFFER_TOO_SMALL);
 
@@ -65,6 +68,16 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT, PIRP irp)
         IoGetRequestorProcess(irp) != PsGetCurrentProcess())
         return Complete(irp, STATUS_INVALID_DEVICE_STATE);
 
+    if (command == ReadText)
+    {
+        const TextRequest request = *static_cast<const TextRequest*>(irp->AssociatedIrp.SystemBuffer);
+        if (request.version != Version) return Complete(irp, STATUS_REVISION_MISMATCH);
+        if (!ValidTextRequest(request)) return Complete(irp, STATUS_INVALID_PARAMETER);
+        TextResponse response{};
+        ExecuteDarkEdenTextRequest(request, response);
+        RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &response, sizeof(response));
+        return Complete(irp, STATUS_SUCCESS, sizeof(response));
+    }
     const Request request = *static_cast<const Request*>(irp->AssociatedIrp.SystemBuffer);
     if (request.version != Version) return Complete(irp, STATUS_REVISION_MISMATCH);
     if (!ValidRequest(request)) return Complete(irp, STATUS_INVALID_PARAMETER);

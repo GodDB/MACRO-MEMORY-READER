@@ -29,6 +29,7 @@ try {
         $cases = @(
             @{Name='DriverClientTests'; Sources=@('tests\DriverClientTests.cpp'); Includes=@()},
             @{Name='CoordinateReaderTests'; Sources=@('tests\CoordinateReaderTests.cpp'); Includes=@('/Itests/stubs','/I.')},
+            @{Name='TextRequestTests'; Sources=@('tests\TextRequestTests.cpp'); Includes=@('/Itests/stubs','/I.')},
             @{Name='KernelProcessAccessTests'; Sources=@('tests\KernelProcessAccessTests.cpp','KernelProcessMemoryReader.cpp'); Includes=@('/Itests/kernel_stubs','/I.')}
         )
         foreach ($case in $cases) {
@@ -46,6 +47,8 @@ try {
         New-Item -ItemType Directory -Force $fixture | Out-Null
         & $compiler @common tests\DriverIntegrationTests.cpp ('/Fo' + (Join-Path $objects 'DriverIntegrationTests.obj')) ('/Fe' + (Join-Path $fixture 'darkeden.exe')) /link /NODEFAULTLIB:oldnames.lib advapi32.lib
         if ($LASTEXITCODE -ne 0) { throw 'Integration fixture build failed.' }
+        & $compiler @common tests\ReadDirectValue.cpp ('/Fo' + (Join-Path $objects 'ReadDirectValue.obj')) ('/Fe' + (Join-Path $tests 'ReadDirectValue.exe')) /link /NODEFAULTLIB:oldnames.lib advapi32.lib
+        if ($LASTEXITCODE -ne 0) { throw 'Direct read diagnostic build failed.' }
         # Running the fixture needs the new driver loaded; building does not load it.
     }
     $imports = & (Join-Path $vc 'bin\Hostx64\x64\dumpbin.exe') /imports $binary

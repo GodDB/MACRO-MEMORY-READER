@@ -1,16 +1,19 @@
 #Requires -RunAsAdministrator
 # Explicitly authorized development-machine setup. Does not reboot Windows.
 [CmdletBinding()]
-param()
+param(
+    [Parameter(Mandatory=$true)][ValidatePattern('^[0-9A-Fa-f]{64}$')][string]$ExpectedSHA256,
+    [Parameter(Mandatory=$true)][ValidatePattern('^[0-9A-Fa-f]{64}$')][string]$ExpectedCertificateHash,
+    [Parameter(Mandatory=$true)][ValidatePattern('^[0-9A-Fa-f]{40}$')][string]$CertificateThumbprint
+)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
 $source = Join-Path $projectRoot 'build\driver\Release\DarkEdenReader.sys'
-$certificatePath = Join-Path $projectRoot 'build\driver\Release\signing\DarkEdenReader-Test.cer'
+$certificatePath = Join-Path $projectRoot 'build\driver\Release\DarkEdenReader-Signer.cer'
 $resultPath = Join-Path $projectRoot 'build\driver\Release\test-setup-result.json'
 $logPath = Join-Path $projectRoot 'build\driver\Release\test-setup.log'
-$expectedHash = '883014B94C0E0E033F2BF2984D74CF1FB16788FB3175DD3A5BC5F086A80AA079'
-$expectedCertificateHash = 'DCC7A7BF98079F8CC80ACEC48BD398296DCB4B7E0734309E074108B7C8D298E7'
-$thumbprint = '313CA2F1B0EE2F9F8D96996B66B37058D2495BD3'
+$expectedHash = $ExpectedSHA256
+$thumbprint = $CertificateThumbprint
 $destination = Join-Path $env:ProgramData 'DarkEdenMemoryReader'
 $serviceBinary = Join-Path $destination 'DarkEdenReader.sys'
 $result = [ordered]@{

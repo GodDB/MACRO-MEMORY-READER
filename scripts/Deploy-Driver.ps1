@@ -1,5 +1,5 @@
 #Requires -RunAsAdministrator
-param([Parameter(Mandatory=$true)][string]$ExpectedSHA256)
+param([Parameter(Mandatory=$true)][string]$ExpectedSHA256, [Parameter(Mandatory=$true)][ValidatePattern('^[0-9A-Fa-f]{40}$')][string]$CertificateThumbprint)
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path $PSScriptRoot -Parent
 $source=Join-Path $projectRoot 'build\driver\Release\DarkEdenReader.sys'
@@ -9,8 +9,8 @@ $result=[ordered]@{Time=(Get-Date).ToString('o');StartCode=$null;Success=$false;
 try {
     if ((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -ne $ExpectedSHA256) { throw 'Source hash mismatch.' }
     $signature=Get-AuthenticodeSignature -LiteralPath $source
-    if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne '313CA2F1B0EE2F9F8D96996B66B37058D2495BD3') { throw 'Signature mismatch.' }
-    if ((Get-Service DarkEdenReader).Status -ne 'Stopped') { throw 'Driver must be stopped before replacement.' }
+    if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $CertificateThumbprint) { throw 'Signature mismatch.' }
+    if ((Get-CimInstance Win32_SystemDriver -Filter "Name='DarkEdenReader'").State -ne 'Stopped') { throw 'Driver must be stopped before replacement.' }
     Copy-Item -LiteralPath $source -Destination $destination -Force
     if ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -ne $ExpectedSHA256) { throw 'Destination hash mismatch.' }
     $configOutput=& sc.exe config DarkEdenReader binPath= $destination 2>&1
@@ -23,7 +23,7 @@ try {
     $diagnostics=Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\DarkEdenReader'
     $result.InitializationStage=$diagnostics.InitializationStage
     if ($null -ne $diagnostics.InitializationStatus) { $result.InitializationStatus=('0x{0:X8}' -f $diagnostics.InitializationStatus) }
-    $result.State=[string](Get-Service DarkEdenReader).Status
+    $result.State=[string](Get-CimInstance Win32_SystemDriver -Filter "Name='DarkEdenReader'").State
     if ($startCode -ne 0) {
         throw ($startOutput | Out-String)
     }

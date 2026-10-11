@@ -33,6 +33,14 @@ int main()
     response.axis = Axis::Both;
     response.version = 1;
     assert(!ValidResponse(request, response, sizeof(response)));
+    Request otherCoordinates{Version, sizeof(Request), 4, OtherCharacterNameOffset,
+                             Axis::Both, 4, ValueType::Int32, 5};
+    Response otherCoordinatesResponse{Version, sizeof(Response), 0, 4, Axis::Both,
+                                      ValueType::Int32, 59, 34};
+    assert(ValidRequest(otherCoordinates));
+    assert(ValidResponse(otherCoordinates, otherCoordinatesResponse, sizeof(otherCoordinatesResponse)));
+    otherCoordinatesResponse.bytesRead = 8;
+    assert(!ValidResponse(otherCoordinates, otherCoordinatesResponse, sizeof(otherCoordinatesResponse)));
     assert(DeviceError(ERROR_FILE_NOT_FOUND).find(L"Win32 2") != std::wstring::npos);
     assert(DeviceError(ERROR_ACCESS_DENIED).find(L"Win32 5") != std::wstring::npos);
     const auto stopped = FormatDeviceError(ERROR_FILE_NOT_FOUND,
@@ -50,5 +58,33 @@ int main()
     assert(FormatDeviceError(ERROR_FILE_NOT_FOUND, {ERROR_SUCCESS, SERVICE_START_PENDING, 0, 0})
         .find(L"상태 전환 중") != std::wstring::npos);
     assert(StatusMessage(static_cast<int32_t>(0xC0000005)).find(L"예외") != std::wstring::npos);
-    std::cout << "Driver client validation and formatting tests passed.\n";
+    Request pair{Version, sizeof(Request), 0, DefaultXOffset, Axis::Both, 4, ValueType::Int32, 3};
+    int calls = 0;
+    bool failY = false;
+    auto transport = [&](DWORD pid, Request part, Response& out, std::wstring& error) {
+        ++calls;
+        part.processId = pid;
+        assert(ValidRequest(part));
+        if (part.axis == Axis::X) {
+            assert(part.baseAddress == 0x009FB03C && part.reserved == 3);
+            out = {Version, sizeof(Response), 0, 4, Axis::X, part.valueType, 48, 0};
+        } else {
+            assert(part.baseAddress == 0x009DF9A8 && part.reserved == 4);
+            if (failY) { error = L"test error"; return false; }
+            out = {Version, sizeof(Response), 0, 4, Axis::Y, part.valueType, 0, 137};
+        }
+        return true;
+    };
+    std::wstring pairError;
+    assert(ReadPlayerCoordinatesWith(transport, 123, pair, response, pairError));
+    assert(calls == 2 && response.xBits == 48 && response.yBits == 137 && response.bytesRead == 8);
+    failY = true;
+    assert(!ReadPlayerCoordinatesWith(transport, 123, pair, response, pairError));
+    assert(response.xBits == 0 && response.yBits == 0 && pairError == L"Y: test error");
+    failY = false;
+    calls = 0;
+    pair.axis = Axis::Y;
+    assert(ReadPlayerCoordinatesWith(transport, 123, pair, response, pairError));
+    assert(calls == 1 && response.xBits == 0 && response.yBits == 137 && response.bytesRead == 4);
+    std::cout << "Driver client validation, paired coordinates and formatting tests passed.\n";
 }

@@ -183,5 +183,172 @@ int main()
     request.pointerBytes = 4;
     request.reserved = 1;
     assert(!ValidRequest(request));
-    std::cout << "Coordinate reader and kernel request dispatch tests passed.\n";
+    // Direct reads never dereference the value or require adjacent Y memory.
+    FakeMemory direct;
+    const ULONG_PTR directAddress = 0x1409E3868ULL;
+    request = {Version, sizeof(Request), 4, directAddress, Axis::X, 0, ValueType::Int32, 0};
+    direct.Put(directAddress, LONG{-123});
+    DispatchCoordinateRequest(direct, request, response);
+    assert(response.status == STATUS_SUCCESS && response.bytesRead == 4);
+    assert(response.xBits == static_cast<uint32_t>(-123) && response.yBits == 0);
+    assert((direct.reads == std::vector<ULONG_PTR>{directAddress}));
+    direct.Put(directAddress, LONG{0});
+    DispatchCoordinateRequest(direct, request, response);
+    assert(response.status == STATUS_SUCCESS && response.xBits == 0);
+    direct.Put(directAddress, 1.25f);
+    request.valueType = ValueType::Float32;
+    DispatchCoordinateRequest(direct, request, response);
+    assert(response.status == STATUS_SUCCESS && response.xBits == 0x3FA00000);
+    direct.bytes.erase(directAddress + 2);
+    DispatchCoordinateRequest(direct, request, response);
+    assert(response.status == STATUS_PARTIAL_COPY && response.bytesRead == 2);
+    assert(response.xBits == 0 && response.yBits == 0);
+    request.axis = Axis::Y;
+    assert(!ValidRequest(request));
+    request.axis = Axis::Both;
+    assert(!ValidRequest(request));
+    request.axis = Axis::X;
+    request.pointerBytes = 1;
+    assert(!ValidRequest(request));
+    FakeMemory single;
+    request = {Version, sizeof(Request), 4, Root, Axis::X, 4, ValueType::Int32, 1};
+    single.Put(Root, ULONG{0x12340});
+    single.Put(0x12340, LONG{39});
+    DispatchCoordinateRequest(single, request, response);
+    assert(response.status == 0 && response.bytesRead == 4 && response.xBits == 39 && response.yBits == 0);
+    assert((single.reads == std::vector<ULONG_PTR>{Root, 0x12340}));
+    single.Put(0x12340, 1.25f);
+    request.valueType = ValueType::Float32;
+    DispatchCoordinateRequest(single, request, response);
+    assert(response.status == 0 && response.xBits == 0x3FA00000);
+    single.bytes.erase(0x12342);
+    DispatchCoordinateRequest(single, request, response);
+    assert(response.status == STATUS_PARTIAL_COPY && response.bytesRead == 2 && response.xBits == 0);
+    single.Put(Root, ULONG{0});
+    DispatchCoordinateRequest(single, request, response);
+    assert(response.status == STATUS_INVALID_ADDRESS && response.bytesRead == 0);
+    single.bytes.erase(Root + 2);
+    DispatchCoordinateRequest(single, request, response);
+    assert(response.status == STATUS_PARTIAL_COPY && response.bytesRead == 0);
+    request.pointerBytes = 8;
+    assert(!ValidRequest(request));
+    request.pointerBytes = 4;
+    request.reserved = 2;
+    assert(!ValidRequest(request));
+    // Screenshot path: read32(module + 009FB03C), +4, read32, +A8, read32, +20C.
+    const ULONG_PTR xRoot = 0x00400000 + DefaultXOffset;
+    FakeMemory xMemory;
+    xMemory.Put(xRoot, ULONG{0x155D3880});
+    xMemory.Put(0x155D3884, ULONG{0x27B20F98});
+    xMemory.Put(0x27B21040, ULONG{0x2D6705A8});
+    xMemory.Put(0x2D6707B4, LONG{32});
+    request = {Version, sizeof(Request), 4, xRoot, Axis::X, 4, ValueType::Int32, 3};
+    DispatchCoordinateRequest(xMemory, request, response);
+    assert(response.status == STATUS_SUCCESS && response.bytesRead == 4 && response.xBits == 32 && response.yBits == 0);
+    assert((xMemory.reads == std::vector<ULONG_PTR>{xRoot, 0x155D3884, 0x27B21040, 0x2D6707B4}));
+    for (auto value : {LONG{0}, LONG{-123}})
+    {
+        xMemory.Put(0x2D6707B4, value);
+        DispatchCoordinateRequest(xMemory, request, response);
+        assert(response.status == STATUS_SUCCESS && response.xBits == static_cast<UInt32>(value));
+    }
+    xMemory.Put(0x2D6707B4, 1.25f);
+    request.valueType = ValueType::Float32;
+    DispatchCoordinateRequest(xMemory, request, response);
+    assert(response.status == STATUS_SUCCESS && response.xBits == 0x3FA00000);
+    xMemory.bytes.erase(0x2D6707B6);
+    DispatchCoordinateRequest(xMemory, request, response);
+    assert(response.status == STATUS_PARTIAL_COPY && response.bytesRead == 2 && response.xBits == 0);
+    const ULONG_PTR xSlots[] = {xRoot, 0x155D3884, 0x27B21040};
+    for (SIZE_T i = 0; i < 3; ++i)
+    {
+        for (auto invalidPointer : {ULONG{0}, ULONG{0xFFFFFFFE}})
+        {
+            auto broken = xMemory;
+            broken.reads.clear();
+            broken.Put(xSlots[i], invalidPointer);
+            DispatchCoordinateRequest(broken, request, response);
+            assert(response.status == (invalidPointer == 0 ? STATUS_INVALID_ADDRESS : STATUS_INTEGER_OVERFLOW));
+            assert(response.bytesRead == 0 && response.xBits == 0 && response.yBits == 0);
+            assert(broken.reads.size() == i + 1);
+        }
+        auto broken = xMemory;
+        broken.reads.clear();
+        broken.bytes.erase(xSlots[i] + 2);
+        DispatchCoordinateRequest(broken, request, response);
+        assert(response.status == STATUS_PARTIAL_COPY && response.bytesRead == 0 && response.xBits == 0);
+        assert(broken.reads.size() == i + 1);
+    }
+    for (auto invalidAxis : {Axis::Y, Axis::Both})
+    {
+        request.axis = invalidAxis;
+        assert(!ValidRequest(request));
+    }
+    request.axis = Axis::X;
+    for (auto invalidWidth : {0u, 8u})
+    {
+        request.pointerBytes = invalidWidth;
+        assert(!ValidRequest(request));
+    }
+    request.pointerBytes = 4;
+    request.reserved = 5;
+    assert(!ValidRequest(request));
+    FakeMemory yMemory;
+    const ULONG_PTR yRoot = 0x00400000 + DefaultYOffset;
+    request = {Version, sizeof(Request), 4, yRoot, Axis::Y, 4, ValueType::Int32, 4};
+    yMemory.Put(yRoot, ULONG{0x2DCDB490});
+    yMemory.Put(0x2DCDB49C, ULONG{0x2762DE54});
+    yMemory.Put(0x2762DE98, ULONG{0x194F2780});
+    yMemory.Put(0x194F2990, LONG{141});
+    DispatchCoordinateRequest(yMemory, request, response);
+    assert(response.status == 0 && response.bytesRead == 4 && response.yBits == 141 && response.xBits == 0);
+    assert((yMemory.reads == std::vector<ULONG_PTR>{yRoot, 0x2DCDB49C, 0x2762DE98, 0x194F2990}));
+    yMemory.Put(0x194F2990, LONG{0});
+    DispatchCoordinateRequest(yMemory, request, response);
+    assert(response.status == 0 && response.yBits == 0 && response.bytesRead == 4);
+    yMemory.Put(0x194F2990, 1.25f);
+    request.valueType = ValueType::Float32;
+    DispatchCoordinateRequest(yMemory, request, response);
+    assert(response.status == 0 && response.yBits == 0x3FA00000);
+    yMemory.bytes.erase(0x194F2992);
+    DispatchCoordinateRequest(yMemory, request, response);
+    assert(response.status == STATUS_PARTIAL_COPY && response.bytesRead == 2 && response.yBits == 0);
+    for (auto slot : {yRoot, ULONG_PTR{0x2DCDB49C}, ULONG_PTR{0x2762DE98}})
+    {
+        auto broken = yMemory;
+        broken.Put(slot, ULONG{0});
+        DispatchCoordinateRequest(broken, request, response);
+        assert(response.status == STATUS_INVALID_ADDRESS && response.bytesRead == 0);
+        broken.Put(slot, ULONG{0xFFFFFFFE});
+        DispatchCoordinateRequest(broken, request, response);
+        assert(response.status == STATUS_INTEGER_OVERFLOW && response.bytesRead == 0);
+        broken.bytes.erase(slot + 2);
+        DispatchCoordinateRequest(broken, request, response);
+        assert(response.status == STATUS_PARTIAL_COPY && response.bytesRead == 0);
+    }
+    request.axis = Axis::Both;
+    assert(!ValidRequest(request));
+    FakeMemory other;
+    const ULONG_PTR otherRoot = 0x00400000 + OtherCharacterNameOffset;
+    other.Put(otherRoot, ULONG{0x2C1E34B0});
+    other.Put(0x2C1E34E4, ULONG{0x28BFB280});
+    other.Put(0x28BFB280, ULONG{0x186B2708});
+    other.Put(0x186B271C, ULONG{0x2F29C9B8});
+    other.Put(0x2F29C9C4, ULONG{0x0022003B}); // X=59, Y=34, two 16-bit values.
+    request = {Version, sizeof(Request), 4, otherRoot, Axis::Both, 4, ValueType::Int32, 5};
+    DispatchCoordinateRequest(other, request, response);
+    assert(response.status == STATUS_SUCCESS && response.bytesRead == 4);
+    assert(response.xBits == 59 && response.yBits == 34);
+    assert((other.reads == std::vector<ULONG_PTR>{otherRoot, 0x2C1E34E4, 0x28BFB280,
+                                                  0x186B271C, 0x2F29C9C4}));
+    request.axis = Axis::X;
+    assert(!ValidRequest(request));
+    request.axis = Axis::Both;
+    request.valueType = ValueType::Float32;
+    assert(!ValidRequest(request));
+    request.valueType = ValueType::Int32;
+    other.Put(0x186B271C, ULONG{0});
+    DispatchCoordinateRequest(other, request, response);
+    assert(response.status == STATUS_INVALID_ADDRESS && response.bytesRead == 0);
+    std::cout << "Coordinate, direct, X and Y pointer request tests passed.\n";
 }

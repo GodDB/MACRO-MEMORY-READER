@@ -7,7 +7,7 @@ using namespace DarkEdenProtocol;
 using namespace DarkEdenClient;
 namespace
 {
-enum : int { Process = 101, Refresh, Connect, Address, Pointer, Type, ReadX, ReadY, ReadBoth, Clear, XValue, YValue, Status, Log };
+enum : int { Process = 101, Refresh, Connect, Address, Pointer, Type, ReadX, ReadY, ReadBoth, Clear, XValue, YValue, Status, Log, ValueLabel };
 constexpr UINT Finished = WM_APP + 1;
 HWND window = nullptr;
 HFONT normalFont = nullptr, titleFont = nullptr, valueFont = nullptr;
@@ -15,7 +15,7 @@ HBRUSH background = nullptr;
 int dpi = 96;
 bool busy = false, errorState = false;
 std::thread worker;
-struct Job { DWORD pid; Request request; Response response{}; bool success = false; wchar_t error[2048]{}; };
+struct Job { DWORD pid; Request request; Response response{}; bool success = false; bool playerCoordinates = false; wchar_t error[2048]{}; };
 std::unique_ptr<Job> job;
 
 int Scale(int x) { return MulDiv(x, dpi, 96); }
@@ -48,11 +48,18 @@ void StatusText(const std::wstring& message, bool error = false)
     LogLine(message);
 }
 void ResetValues() { Text(XValue, L"—"); Text(YValue, L"—"); }
+bool DirectMode() { return SendMessageW(Control(Pointer), CB_GETCURSEL, 0, 0) == 0; }
+bool PlayerCoordinatesMode() { return SendMessageW(Control(Pointer), CB_GETCURSEL, 0, 0) == 3; }
+bool SingleValueMode() { return DirectMode(); }
 void SetBusy(bool value)
 {
     busy = value;
     const int ids[] = {Process, Refresh, Connect, Address, Pointer, Type, ReadX, ReadY, ReadBoth};
     for (const int id : ids) EnableWindow(Control(id), !value);
+    EnableWindow(Control(ReadY), !value && !SingleValueMode());
+    EnableWindow(Control(ReadBoth), !value && !SingleValueMode());
+    Text(ReadX, DirectMode() ? L"값 읽기 (4바이트)" : L"X좌표 요청");
+    Text(ValueLabel, DirectMode() ? L"조회한 값" : L"X 좌표");
 }
 void RefreshProcesses()
 {
@@ -87,23 +94,25 @@ void CheckConnection()
 void StartRead(Axis axis)
 {
     if (busy) return;
+    if (SingleValueMode() && axis != Axis::X) return;
     ResetValues();
     const auto selected = SendMessageW(Control(Process), CB_GETCURSEL, 0, 0);
     if (selected == CB_ERR) { StatusText(L"darkeden.exe를 실행하고 대상 프로세스를 선택하세요.", true); return; }
     uint64_t address;
     try { address = ParseAddress(Text(Address)); }
     catch (const std::invalid_argument&)
-    { StatusText(L"기준 주소를 0이 아닌 16진수로 입력하세요. 예: 0x009CB97C", true); return; }
+    { StatusText(L"모듈 오프셋을 0이 아닌 16진수로 입력하세요. 예: 0x009FB03C", true); return; }
     auto next = std::make_unique<Job>();
+    next->playerCoordinates = PlayerCoordinatesMode();
     next->pid = static_cast<DWORD>(SendMessageW(Control(Process), CB_GETITEMDATA, selected, 0));
     next->request = {Version, sizeof(Request), 0, address, axis,
-        SendMessageW(Control(Pointer), CB_GETCURSEL, 0, 0) == 0 ? 4u : 8u,
-        SendMessageW(Control(Type), CB_GETCURSEL, 0, 0) == 0 ? ValueType::Int32 : ValueType::Float32, 0};
+        DirectMode() ? 0u : (SendMessageW(Control(Pointer), CB_GETCURSEL, 0, 0) == 2 ? 8u : 4u),
+        SendMessageW(Control(Type), CB_GETCURSEL, 0, 0) == 0 ? ValueType::Int32 : ValueType::Float32, PlayerCoordinatesMode() ? 3u : 0u};
     if (next->request.pointerBytes == 4 && address > UINT32_MAX)
     { StatusText(L"32비트 포인터의 기준 주소는 0xFFFFFFFF 이하여야 합니다.", true); return; }
     job = std::move(next);
     SetBusy(true);
-    StatusText(L"커널 드라이버에서 좌표를 읽는 중…");
+    StatusText(L"커널 드라이버에서 값을 읽는 중…");
     try
     {
         worker = std::thread([]
@@ -111,7 +120,9 @@ void StartRead(Axis axis)
             try
             {
                 std::wstring error;
-                job->success = DarkEdenClient::Read(job->pid, job->request, job->response, error);
+                job->success = job->playerCoordinates ?
+                    ReadPlayerCoordinates(job->pid, job->request, job->response, error) :
+                    DarkEdenClient::Read(job->pid, job->request, job->response, error);
                 wcsncpy_s(job->error, error.c_str(), _TRUNCATE);
             }
             catch (const std::exception& ex)
@@ -138,7 +149,7 @@ void FinishRead()
         if (result.axis != Axis::X) Text(YValue, FormatValue(result.yBits, result.valueType));
         StatusText(L"읽기 성공 · PID " + std::to_wstring(job->pid) + L" · " +
             std::to_wstring(result.bytesRead) + L" 바이트 · NTSTATUS 0x00000000");
-        LogLine(L"X = " + Text(XValue) + L" / Y = " + Text(YValue) + L" / 모듈 오프셋 " + Hex(job->request.baseAddress));
+        LogLine((job->request.pointerBytes == 0 ? L"값 = " : L"X = ") + Text(XValue) + L" / Y = " + Text(YValue) + L" / 모듈 오프셋 " + Hex(job->request.baseAddress));
     }
     job.reset();
 }
@@ -154,28 +165,28 @@ HWND Add(const wchar_t* kind, const wchar_t* label, DWORD style, int id, int x, 
 void BuildControls()
 {
     Add(L"STATIC", L"DarkEden 좌표 리더", 0, 0, 24, 18, 750, 34, titleFont);
-    Add(L"STATIC", L"커널 드라이버 연결 · X / Y 좌표 조회", 0, 0, 24, 57, 750, 24);
+    Add(L"STATIC", L"내 좌표: X +009FB03C → 4 → A8 → 20C / Y +009DF9A8 → C → 44 → 210", 0, 0, 24, 57, 772, 24);
     Add(L"STATIC", L"대상 프로세스", 0, 0, 24, 96, 130, 23);
     Add(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP | WS_VSCROLL, Process, 24, 122, 416, 220);
     Add(L"BUTTON", L"새로고침", WS_TABSTOP, Refresh, 454, 120, 142, 32);
     Add(L"BUTTON", L"드라이버 연결 확인", WS_TABSTOP, Connect, 610, 120, 186, 32);
-    Add(L"STATIC", L"기준 주소 (절대 주소 · 16진수)", 0, 0, 24, 172, 300, 23);
-    Add(L"STATIC", L"포인터 크기", 0, 0, 360, 172, 180, 23);
-    Add(L"STATIC", L"좌표 자료형", 0, 0, 584, 172, 180, 23);
-    Add(L"EDIT", L"0x009CB97C", ES_AUTOHSCROLL | WS_TABSTOP, Address, 24, 198, 312, 29);
+    Add(L"STATIC", L"시작 오프셋 (내 좌표 모드는 X)", 0, 0, 24, 172, 300, 23);
+    Add(L"STATIC", L"읽기 방식", 0, 0, 360, 172, 180, 23);
+    Add(L"STATIC", L"값 자료형", 0, 0, 584, 172, 180, 23);
+    Add(L"EDIT", Hex(DefaultXOffset).c_str(), ES_AUTOHSCROLL | WS_TABSTOP, Address, 24, 198, 312, 29);
     SendMessageW(Control(Address), EM_SETLIMITTEXT, 32, 0);
     Add(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, Pointer, 360, 198, 200, 160);
     Add(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, Type, 584, 198, 212, 160);
-    for (auto label : {L"32비트 (4바이트)", L"64비트 (8바이트)"})
+    for (auto label : {L"직접 값 읽기", L"32비트 포인터 경로", L"64비트 포인터 경로", L"내 좌표 X / Y (32비트)"})
         SendMessageW(Control(Pointer), CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
     for (auto label : {L"정수 (int32)", L"실수 (float32)"})
         SendMessageW(Control(Type), CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
-    SendMessageW(Control(Pointer), CB_SETCURSEL, 0, 0);
+    SendMessageW(Control(Pointer), CB_SETCURSEL, 3, 0);
     SendMessageW(Control(Type), CB_SETCURSEL, 0, 0);
-    Add(L"BUTTON", L"X좌표 요청", WS_TABSTOP, ReadX, 24, 253, 248, 42);
+    Add(L"BUTTON", L"X좌표 요청", WS_TABSTOP | BS_DEFPUSHBUTTON, ReadX, 24, 253, 248, 42);
     Add(L"BUTTON", L"Y좌표 요청", WS_TABSTOP, ReadY, 286, 253, 248, 42);
-    Add(L"BUTTON", L"X + Y 둘 다 요청", WS_TABSTOP | BS_DEFPUSHBUTTON, ReadBoth, 548, 253, 248, 42);
-    Add(L"STATIC", L"X 좌표", 0, 0, 24, 318, 340, 23);
+    Add(L"BUTTON", L"X + Y 둘 다 요청", WS_TABSTOP, ReadBoth, 548, 253, 248, 42);
+    Add(L"STATIC", L"직접 읽은 값", 0, ValueLabel, 24, 318, 340, 23);
     Add(L"STATIC", L"Y 좌표", 0, 0, 418, 318, 340, 23);
     Add(L"STATIC", L"—", SS_LEFT, XValue, 24, 346, 378, 50, valueFont);
     Add(L"STATIC", L"—", SS_LEFT, YValue, 418, 346, 378, 50, valueFont);
@@ -184,6 +195,7 @@ void BuildControls()
     Add(L"BUTTON", L"기록 지우기", WS_TABSTOP, Clear, 654, 480, 142, 30);
     Add(L"EDIT", L"", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | WS_TABSTOP, Log, 24, 520, 772, 137);
     SendMessageW(Control(Log), EM_SETLIMITTEXT, 65535, 0);
+    SetBusy(false);
     RefreshProcesses();
 }
 
@@ -211,6 +223,7 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wparam, LPARAM 
             if ((HIWORD(wparam) == CBN_SELCHANGE && (LOWORD(wparam) == Process || LOWORD(wparam) == Pointer || LOWORD(wparam) == Type)) ||
                 (LOWORD(wparam) == Address && HIWORD(wparam) == EN_CHANGE))
             {
+                SetBusy(false);
                 ResetValues();
                 if (Control(Log)) StatusText(L"설정이 변경되었습니다. 좌표를 다시 요청하세요.");
             }
