@@ -9,10 +9,11 @@ using UInt32 = unsigned int;
 using UInt64 = unsigned long long;
 using Int32 = int;
 static_assert(sizeof(UInt32) == 4 && sizeof(Int32) == 4 && sizeof(UInt64) == 8, "Unsupported integer widths");
-constexpr UInt32 Version = 2;
+constexpr UInt32 Version = 3;
 constexpr UInt32 DeviceType = 0x8000;
 constexpr UInt32 ReadCoordinates = CTL_CODE(DeviceType, 0x800, METHOD_BUFFERED, FILE_READ_ACCESS);
 constexpr UInt32 ReadText = CTL_CODE(DeviceType, 0x801, METHOD_BUFFERED, FILE_READ_ACCESS);
+constexpr UInt32 SelectTarget = CTL_CODE(DeviceType, 0x802, METHOD_BUFFERED, FILE_WRITE_ACCESS);
 constexpr wchar_t DevicePath[] = L"\\\\.\\DarkEdenMemoryReader";
 constexpr UInt64 DefaultBaseAddress = 0x009CB97C;
 constexpr UInt64 DefaultDirectOffset = 0x009E3868;
@@ -20,6 +21,8 @@ constexpr UInt64 DefaultXOffset = 0x009FB03C; // X: 32-bit pointers +4, +0xA8, t
 constexpr UInt64 DefaultYOffset = 0x009DF9A8; // Y: 32-bit pointers +C, +44, then value at +210.
 constexpr UInt64 DefaultTextOffset = 0x000A8B14;
 constexpr UInt64 OtherCharacterNameOffset = 0x00AB31D0;
+constexpr UInt64 TargetControllerOffset = 0x00AB3254;
+constexpr UInt64 TargetControllerVtableOffset = 0x005D8310;
 enum class Axis : UInt32 { X = 1, Y = 2, Both = 3 };
 enum class ValueType : UInt32 { Int32 = 1, Float32 = 2 };
 
@@ -70,6 +73,30 @@ struct TextResponse
     unsigned char data[256];
 };
 static_assert(sizeof(TextRequest) == 32 && sizeof(TextResponse) == 288, "Text ABI mismatch");
+
+struct SelectTargetRequest
+{
+    UInt32 version;
+    UInt32 size;
+    UInt64 processId;
+    UInt32 targetId;
+    UInt32 reserved;
+};
+struct SelectTargetResponse
+{
+    UInt32 version;
+    UInt32 size;
+    Int32 status;
+    UInt32 selectedId;
+};
+static_assert(sizeof(SelectTargetRequest) == 24 && sizeof(SelectTargetResponse) == 16,
+              "Target selection ABI mismatch");
+inline bool ValidSelectTargetRequest(const SelectTargetRequest& r) noexcept
+{
+    return r.version == Version && r.size == sizeof(r) && r.processId != 0 &&
+        r.processId <= 0xFFFFFFFFULL && r.targetId != 0 &&
+        r.targetId != 0xFFFFFFFFu && r.reserved == 0;
+}
 inline bool ValidTextRequest(const TextRequest& r) noexcept
 {
     return r.version == Version && r.size == sizeof(TextRequest) && r.processId != 0 &&

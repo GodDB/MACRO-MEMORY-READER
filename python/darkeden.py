@@ -16,8 +16,6 @@ class ValueType(IntEnum):
     X = 1
     Y = 2
     CHARACTER_NAME = 3
-    OTHER_CHARACTER_NAME = 4
-    OTHER_CHARACTER_COORDINATES = 5
 
 
 class DarkEdenError(RuntimeError):
@@ -55,6 +53,10 @@ def _load_engine():
         ctypes.c_wchar_p, ctypes.c_uint32,
     )
     library.DE_ListNearbyCharacters.restype = ctypes.c_int
+    library.DE_SelectNearbyCharacter.argtypes = (
+        ctypes.c_uint32, ctypes.c_uint32, ctypes.c_wchar_p, ctypes.c_uint32,
+    )
+    library.DE_SelectNearbyCharacter.restype = ctypes.c_int
     _engine = library
     return library
 
@@ -88,7 +90,7 @@ def read_value(value_type: ValueType, pid: int | None = None) -> int | str:
 
 
 def list_nearby_characters(pid: int | None = None) -> list[dict[str, int | str]]:
-    """Read nearby characters as name, race, ID, X and Y dictionaries."""
+    """Read nearby characters as name, race, life, ID, X and Y dictionaries."""
     if pid is None:
         processes = list_processes()
         if not processes:
@@ -112,3 +114,15 @@ def list_nearby_characters(pid: int | None = None) -> list[dict[str, int | str]]
     if not isinstance(characters, list):
         raise DarkEdenError("주변 목록 응답 형식이 올바르지 않습니다.")
     return characters
+
+
+def select_nearby_character(pid: int, character_id: int) -> None:
+    """Select a character by ID using the project's kernel driver."""
+    if not isinstance(pid, int) or not 0 < pid <= 0xFFFFFFFF:
+        raise ValueError("pid는 양의 32비트 정수여야 합니다.")
+    if not isinstance(character_id, int) or not 0 < character_id < 0xFFFFFFFF:
+        raise ValueError("캐릭터 ID가 올바르지 않습니다.")
+    error = ctypes.create_unicode_buffer(1024)
+    code = _load_engine().DE_SelectNearbyCharacter(pid, character_id, error, len(error))
+    if code:
+        raise DarkEdenError(error.value or f"캐릭터를 선택하지 못했습니다 (오류 {code}).")

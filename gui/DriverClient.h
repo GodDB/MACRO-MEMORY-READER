@@ -60,6 +60,8 @@ inline std::wstring StatusMessage(int32_t status)
     case 0xC0000024: return L"프로세스 핸들이 아닌 핸들이 전달되었습니다.";
     case 0xC0000034: return L"대상 프로세스의 이미지 이름을 찾을 수 없습니다.";
     case 0xC0000033: return L"대상 프로세스가 darkeden.exe가 아닙니다.";
+    case 0xC0000225: return L"해당 ID의 캐릭터가 현재 주변 목록에 없습니다.";
+    case 0xC0000059: return L"게임의 선택 구조 또는 드라이버 버전이 일치하지 않습니다.";
     default: return L"커널 읽기 요청에 실패했습니다. NTSTATUS를 확인하세요.";
     }
 }
@@ -278,6 +280,35 @@ inline bool ReadText(DWORD pid, DarkEdenProtocol::TextRequest request,
     if (response.status < 0)
     {
         error = StatusMessage(response.status) + L" NTSTATUS " + Hex(static_cast<uint32_t>(response.status));
+        return false;
+    }
+    return true;
+}
+
+inline bool SelectNearbyTarget(DWORD pid, uint32_t targetId, std::wstring& error)
+{
+    using namespace DarkEdenProtocol;
+    SelectTargetRequest request{Version, sizeof(SelectTargetRequest), pid, targetId, 0};
+    if (!ValidSelectTargetRequest(request))
+    { error = L"캐릭터 ID가 올바르지 않습니다."; return false; }
+    Handle device(CreateFileW(DevicePath, GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+    if (!device) { error = DeviceError(GetLastError()); return false; }
+    SelectTargetResponse response{};
+    DWORD returned = 0;
+    if (!DeviceIoControl(device.get(), SelectTarget, &request, sizeof(request),
+                         &response, sizeof(response), &returned, nullptr))
+    {
+        error = L"선택 요청 통신 실패. 드라이버를 새 버전으로 설치하세요. " + WindowsError(GetLastError());
+        return false;
+    }
+    if (returned != sizeof(response) || response.version != Version ||
+        response.size != sizeof(response))
+    { error = L"선택 응답 형식이 올바르지 않습니다. 앱과 드라이버 버전을 맞추세요."; return false; }
+    if (response.status < 0 || response.selectedId != targetId)
+    {
+        error = StatusMessage(response.status) + L" NTSTATUS " +
+            Hex(static_cast<uint32_t>(response.status));
         return false;
     }
     return true;

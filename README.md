@@ -1,5 +1,22 @@
 # Windows 커널 메모리 읽기 및 Python 값 API
 
+## 주변 캐릭터 ID로 선택 (2026-10-12)
+
+Python GUI에서 **주변 캐릭터 → 목록 새로고침**을 누르고 한 명을 고른 뒤
+**선택한 캐릭터 지정**을 누릅니다. 앱은 선택한 행의 ID를 C++ 엔진과
+`SelectTarget` IOCTL을 거쳐 `DarkEdenReader` 커널 드라이버에 전달합니다.
+Cheat Engine, 마우스 이동, 마우스 클릭은 선택 동작에 쓰이지 않습니다.
+
+드라이버는 `darkeden.exe+AB3254`의 선택 컨트롤러를 확인하고,
+`darkeden.exe+AB31D0`의 주변 캐릭터 트리에서 요청 ID와 객체 ID·좌표를
+검증한 뒤 컨트롤러 `+0x28`의 4바이트 ID 한 곳만 갱신합니다.
+게임 버전이 바뀌어 컨트롤러 vtable이 달라지면 쓰지 않고 오류를 반환합니다.
+Python에서 직접 호출하려면 `select_nearby_character(pid, character_id)`를 사용합니다.
+이 기능은 프로토콜 버전 3의 새 드라이버와 C++ 엔진 DLL이 함께 필요합니다.
+
+2026-10-12 새 드라이버 서명·설치·실행과 자체 프로세스 IOCTL 검사는 통과했습니다.
+당시 게임 프로세스가 종료돼 실제 게임 화면의 선택 표시는 아직 검증하지 못했습니다.
+
 ## 주변 캐릭터 목록 포인터 (2026-10-11)
 
 Cheat Engine Lua Engine에서 `dofile([[C:\Users\Administrator\Desktop\MACRO\auto_nearby.lua]])`를 실행하면
@@ -26,9 +43,10 @@ root    = read32(header + 0x04)
 네 캐릭터를 다시 읽어 확인했습니다. 중간 주소와 `crazyfuc` ID는 재시작 시 바뀌었습니다.
 
 Python 앱에서도 `list_nearby_characters(pid)`로 현재 목록을 읽을 수 있습니다.
-반환값은 `[{"name": "dongbeom", "race": "Vampire", "id": 12039, "x": 52, "y": 50}, ...]`
+반환값은 `[{"name": "dongbeom", "race": "Vampire", "life": "생존", "id": 12039, "x": 52, "y": 50}, ...]`
 형식이며, GUI의 **주변 캐릭터 → 목록 새로고침** 버튼에서 이름·종족·X·Y·ID를
-표시합니다. 경로는 `Python → C++ DLL → DarkEdenReader 드라이버`입니다.
+표시합니다. 2026-10-12부터 **상태** 열도 함께 표시합니다. 경로는
+`Python → C++ DLL → DarkEdenReader 드라이버`입니다.
 일반 캐릭터 이름은 객체의 `+0x544` 포인터가 가리키는 문자열이고, 이 포인터가
 비어 있는 본인 캐릭터는 기존 본인 이름 경로에서 읽습니다. 이름 경로가 모두
 비어 있으면 `ID_...`로 표시합니다. 드라이버가 실행 중이어야 앱에서 읽을 수 있습니다.
@@ -36,6 +54,9 @@ Python 앱에서도 `list_nearby_characters(pid)`로 현재 목록을 읽을 수
 `(0x42, 0)=Ousters`, `(0, 2)=Vampire`, `(0x63, 0)=Slayer`만 표시합니다.
 다른 조합은 `미확인`입니다. `heroman`·`hellow`(Ousters),
 `dongbeom`·`mobility`(Vampire), `companion`(Slayer)으로 실제 조회를 확인했습니다.
+생존 상태는 객체 `+0x548`의 4바이트 값으로 `1=생존`, `0=사망`, 그 외는
+`미확인`으로 표시합니다. 같은 `dongbeom`의 생존·사망 스냅샷과 부활 스냅샷에서
+각각 `1 → 0 → 1`을 확인했습니다.
 2026-10-11 재빌드 후 `DarkEdenReader` 실행과 GUI 실행을 확인했습니다.
 당시 게임 프로세스가 실행 중이지 않아 실제 게임 목록 조회는 아직 검증하지
 못했습니다. C++ 엔진 DLL 빌드와 Python 응답 처리 검사는 통과했습니다.
@@ -43,7 +64,8 @@ Python 앱에서도 `list_nearby_characters(pid)`로 현재 목록을 읽을 수
 ## Python API와 테스트 화면 (2026-10-10)
 
 현재 사용 경로는 `Python → C++ DLL → 커널 드라이버`입니다. Python에서는
-`read_value(타입, pid)` 함수 하나로 내 X/Y좌표, 내 캐릭터명, 상대방 이름과 현재 좌표를 읽습니다.
+`read_value(타입, pid)`로 내 X/Y좌표와 내 캐릭터명을 읽습니다.
+주변 캐릭터의 이름과 좌표는 `list_nearby_characters(pid)`로 함께 조회합니다.
 
 ```python
 from python.darkeden import ValueType, read_value
@@ -51,8 +73,6 @@ from python.darkeden import ValueType, read_value
 x = read_value(ValueType.X)                  # int
 y = read_value(ValueType.Y)                  # int
 name = read_value(ValueType.CHARACTER_NAME) # str
-other = read_value(ValueType.OTHER_CHARACTER_NAME) # str
-other_xy = read_value(ValueType.OTHER_CHARACTER_COORDINATES) # "X, Y"
 ```
 
 `pid`를 생략하면 실행 중인 `darkeden.exe`가 정확히 하나일 때 자동 선택합니다.
@@ -73,15 +93,9 @@ UTF-8을 우선 해석하고, 실패하면 CP949를 사용합니다. UTF-16LE �
 새 드라이버를 서명하고 적용해야 합니다. 현재 실제 게임에서 캐릭터명 값은
 아직 확인하지 않았습니다.
 
-상대방 이름은 CE 화면의 `darkeden.exe+00AB31D0`에서 시작해 32비트 포인터를
-`34 → 0 → 14 → 544` 순서로 따라간 뒤 마지막 주소의 `+0`에 있는
-문자열로 읽습니다. 단일 값 API는 트리의 맨 왼쪽 캐릭터를 반환하고,
-`list_nearby_characters()`는 트리 전체를 순회합니다. 화면의 최종 주소
-`295E6740`은 코드에 고정하지 않았습니다.
-상대방 현재 좌표는 같은 루트에서 `34 → 0 → 14`를 따라간 객체의 `+0x0C`와
-`+0x0E`를 각각 2바이트로 읽습니다. `+0x4C0/+0x4C2`는 이동 목표 좌표로
-관찰되어 현재 좌표 표시에는 사용하지 않습니다. GUI에서 자동 갱신을 켜면
-200ms 간격으로 두 값을 한 번의 드라이버 요청으로 조회합니다.
+주변 목록은 `darkeden.exe+00AB31D0`에서 시작하는 트리를 순회합니다.
+각 캐릭터 객체의 `+0x544`에서 이름 포인터를, `+0x0C/+0x0E`에서 현재
+X/Y좌표를 읽습니다. GUI의 단일 상대방 이름·좌표 항목은 제거했습니다.
 
 ## 현재 X/Y 조회 (2026-10-10)
 

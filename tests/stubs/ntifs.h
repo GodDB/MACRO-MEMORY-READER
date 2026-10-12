@@ -22,4 +22,5 @@ constexpr NTSTATUS STATUS_INTEGER_OVERFLOW = static_cast<NTSTATUS>(0xC0000095u);
 constexpr NTSTATUS STATUS_INVALID_PARAMETER = static_cast<NTSTATUS>(0xC000000Du);
 #define METHOD_BUFFERED 0
 #define FILE_READ_ACCESS 1
+#define FILE_WRITE_ACCESS 2
 #define CTL_CODE(type, function, method, access) (((type) << 16) | ((access) << 14) | ((function) << 2) | (method))

@@ -36,7 +36,7 @@ NTSTATUS KernelProcessMemoryReader::Initialize(HANDLE processId) noexcept
     return status;
 }
 
-NTSTATUS KernelProcessMemoryReader::InitializeForRequest(HANDLE processId) noexcept
+NTSTATUS KernelProcessMemoryReader::InitializeForRequest(HANDLE processId, bool allowWrite) noexcept
 {
     if (KeGetCurrentIrql() != PASSIVE_LEVEL || process_ != nullptr)
         return STATUS_INVALID_DEVICE_STATE;
@@ -46,7 +46,10 @@ NTSTATUS KernelProcessMemoryReader::InitializeForRequest(HANDLE processId) noexc
     // PROCESS_VM_READ | PROCESS_QUERY_LIMITED_INFORMATION (winnt.h).
     // The caller's security context remains active throughout this operation.
     constexpr ACCESS_MASK ProcessVmRead = 0x0010;
-    constexpr ACCESS_MASK RequestedAccess = ProcessVmRead | 0x1000;
+    constexpr ACCESS_MASK ProcessVmWrite = 0x0020;
+    constexpr ACCESS_MASK ProcessVmOperation = 0x0008;
+    const ACCESS_MASK RequestedAccess = ProcessVmRead | 0x1000 |
+        (allowWrite ? ProcessVmWrite | ProcessVmOperation : 0);
     OBJECT_ATTRIBUTES attributes;
     InitializeObjectAttributes(&attributes, nullptr,
         OBJ_KERNEL_HANDLE | OBJ_FORCE_ACCESS_CHECK, nullptr, nullptr);
@@ -169,4 +172,35 @@ NTSTATUS KernelProcessMemoryReader::CopyValue(
 
     RtlCopyMemory(output, scratch, size);
     return STATUS_SUCCESS;
+}
+
+NTSTATUS KernelProcessMemoryReader::WriteUInt32(ULONG_PTR address, ULONG value) const noexcept
+{
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL || process_ == nullptr)
+        return STATUS_INVALID_DEVICE_STATE;
+    const ULONG_PTR highestUserAddress = reinterpret_cast<ULONG_PTR>(MmHighestUserAddress);
+    if (address == 0 || address > highestUserAddress - sizeof(value) + 1 ||
+        (address & (alignof(ULONG) - 1)) != 0)
+        return STATUS_INVALID_PARAMETER;
+
+    NTSTATUS status = STATUS_SUCCESS;
+    KAPC_STATE apcState{};
+    KeStackAttachProcess(reinterpret_cast<PRKPROCESS>(process_), &apcState);
+    __try
+    {
+        __try
+        {
+            ProbeForWrite(reinterpret_cast<void*>(address), sizeof(value), alignof(ULONG));
+            InterlockedExchange(reinterpret_cast<volatile LONG*>(address), static_cast<LONG>(value));
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            status = GetExceptionCode();
+        }
+    }
+    __finally
+    {
+        KeUnstackDetachProcess(&apcState);
+    }
+    return status;
 }

@@ -7,7 +7,7 @@ struct State {
     UCHAR irql = PASSIVE_LEVEL;
     NTSTATUS openStatus = STATUS_SUCCESS, queryStatus = STATUS_SUCCESS;
     NTSTATUS referenceStatus = STATUS_SUCCESS, imageStatus = STATUS_SUCCESS;
-    ULONG access = 0x1010, queryLength = sizeof(PUBLIC_OBJECT_BASIC_INFORMATION);
+    ULONG access = 0x1010, requested = 0x1010, queryLength = sizeof(PUBLIC_OBJECT_BASIC_INFORMATION);
     ULONG_PTR imageBase = 0x140000000ULL;
     int opens = 0, closes = 0, references = 0, releases = 0, frees = 0, lookups = 0;
     const WCHAR* image = L"C:\\fixture\\darkeden.exe";
@@ -27,7 +27,7 @@ PVOID PsGetProcessSectionBaseAddress(PEPROCESS process)
 NTSTATUS ZwOpenProcess(HANDLE* handle, ACCESS_MASK access, OBJECT_ATTRIBUTES* a, CLIENT_ID* id)
 {
     ++state.opens;
-    assert(access == 0x1010);
+    assert(access == state.requested);
     assert(a->Length == sizeof(*a) && a->ObjectName == nullptr && a->RootDirectory == nullptr);
     assert(a->Attributes == (OBJ_KERNEL_HANDLE | OBJ_FORCE_ACCESS_CHECK));
     assert(id->UniqueProcess == testPid && id->UniqueThread == nullptr);
@@ -47,8 +47,8 @@ NTSTATUS ObReferenceObjectByHandle(HANDLE handle, ACCESS_MASK access, void* type
     KPROCESSOR_MODE mode, void** process, void*)
 {
     ++state.references;
-    assert(handle == testHandle && access == 0x1010 && type == *PsProcessType && mode == KernelMode);
-    assert((state.access & 0x1010) == 0x1010);
+    assert(handle == testHandle && access == state.requested && type == *PsProcessType && mode == KernelMode);
+    assert((state.access & state.requested) == state.requested);
     if (NT_SUCCESS(state.referenceStatus)) *process = &object;
     return state.referenceStatus;
 }
@@ -75,6 +75,8 @@ void ExFreePool(void*) { ++state.frees; }
 void KeStackAttachProcess(PRKPROCESS, KAPC_STATE*) { assert(false); }
 void KeUnstackDetachProcess(KAPC_STATE*) { assert(false); }
 NTSTATUS MmCopyMemory(void*, MM_COPY_ADDRESS, SIZE_T, ULONG, SIZE_T*) { assert(false); return STATUS_UNSUCCESSFUL; }
+void ProbeForWrite(void*, SIZE_T, ULONG) { assert(false); }
+LONG InterlockedExchange(volatile LONG*, LONG) { assert(false); return 0; }
 
 int main()
 {
@@ -89,6 +91,18 @@ int main()
         assert(state.lookups == 0 && state.frees == 1);
     }
     assert(state.releases == 1);
+    state = {}; state.requested = state.access = 0x1038;
+    {
+        KernelProcessMemoryReader reader;
+        assert(reader.InitializeForRequest(testPid, true) == STATUS_SUCCESS);
+        assert(state.opens == 1 && state.references == 1);
+    }
+    state = {}; state.requested = 0x1038;
+    {
+        KernelProcessMemoryReader reader;
+        assert(reader.InitializeForRequest(testPid, true) == STATUS_ACCESS_DENIED);
+        assert(state.opens == 1 && state.references == 0);
+    }
     state = {};
     {
         KernelProcessMemoryReader reader;

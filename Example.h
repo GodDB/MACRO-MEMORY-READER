@@ -16,3 +16,6 @@ void ExecuteDarkEdenRequest(const DarkEdenProtocol::Request& request,
 _IRQL_requires_(PASSIVE_LEVEL)
 void ExecuteDarkEdenTextRequest(const DarkEdenProtocol::TextRequest& request,
                                 DarkEdenProtocol::TextResponse& response) noexcept;
+_IRQL_requires_(PASSIVE_LEVEL)
+void ExecuteSelectTargetRequest(const DarkEdenProtocol::SelectTargetRequest& request,
+                                DarkEdenProtocol::SelectTargetResponse& response) noexcept;

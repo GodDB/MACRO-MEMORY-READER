@@ -48,6 +48,8 @@ void ExFreePool(void*);
 void KeStackAttachProcess(PRKPROCESS, KAPC_STATE*);
 void KeUnstackDetachProcess(KAPC_STATE*);
 NTSTATUS MmCopyMemory(void*, MM_COPY_ADDRESS, SIZE_T, ULONG, SIZE_T*);
+void ProbeForWrite(void*, SIZE_T, ULONG);
+LONG InterlockedExchange(volatile LONG*, LONG);
 #define NT_ASSERT(value) assert(value)
 #define RTL_CONSTANT_STRING(value) {static_cast<USHORT>(sizeof(value) - sizeof(WCHAR)), static_cast<USHORT>(sizeof(value)), const_cast<WCHAR*>(value)}
 #define RtlCopyMemory std::memcpy

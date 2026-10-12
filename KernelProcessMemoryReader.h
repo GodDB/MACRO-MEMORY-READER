@@ -51,11 +51,14 @@ public:
     // Open a private kernel handle with forced caller access checks.
     // Must execute synchronously in the requesting thread's security context.
     _IRQL_requires_(PASSIVE_LEVEL)
-    NTSTATUS InitializeForRequest(HANDLE processId) noexcept;
+    NTSTATUS InitializeForRequest(HANDLE processId, bool allowWrite = false) noexcept;
 
     // Resolve an offset from the referenced process image in kernel mode.
     _IRQL_requires_(PASSIVE_LEVEL)
     NTSTATUS ResolveImageOffset(ULONG_PTR offset, ULONG_PTR* address) const noexcept;
+
+    _IRQL_requires_(PASSIVE_LEVEL)
+    NTSTATUS WriteUInt32(ULONG_PTR address, ULONG value) const noexcept;
 
     template <typename T>
     _IRQL_requires_(PASSIVE_LEVEL)

@@ -6,8 +6,6 @@ enum class DarkEdenValueType : unsigned
     X = 1,
     Y = 2,
     CharacterName = 3,
-    OtherCharacterName = 4,
-    OtherCharacterCoordinates = 5,
 };
 
 extern "C" __declspec(dllexport) int __stdcall DE_ReadValue(
@@ -18,3 +16,5 @@ extern "C" __declspec(dllexport) unsigned __stdcall DE_ListProcesses(
 extern "C" __declspec(dllexport) int __stdcall DE_ListNearbyCharacters(
     unsigned processId, wchar_t* output, unsigned outputCapacity,
     wchar_t* errorOutput, unsigned errorCapacity);
+extern "C" __declspec(dllexport) int __stdcall DE_SelectNearbyCharacter(
+    unsigned processId, unsigned characterId, wchar_t* errorOutput, unsigned errorCapacity);

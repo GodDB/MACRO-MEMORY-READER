@@ -83,47 +83,20 @@ bool ReadDword(unsigned processId, uintptr_t imageBase, uintptr_t address,
     return true;
 }
 
-bool ReadOtherCharacter(unsigned processId, bool coordinates,
-                        std::wstring& value, std::wstring& error)
+bool ReadOwnXFromYPath(unsigned processId, uint32_t& value, std::wstring& error)
 {
     using namespace DarkEdenProtocol;
     uintptr_t imageBase = 0;
     if (!FindImageBase(processId, imageBase, error)) return false;
-    uint32_t manager = 0;
-    uint32_t header = 0;
-    uint32_t node = 0;
-    uint32_t object = 0;
-    if (!ReadDword(processId, imageBase, imageBase + OtherCharacterNameOffset, manager, error)) return false;
-    if (!manager) { error = L"주변 캐릭터 목록이 아직 준비되지 않았습니다."; return false; }
-    if (!ReadDword(processId, imageBase, static_cast<uintptr_t>(manager) + 0x34, header, error)) return false;
-    if (!header) { error = L"주변 캐릭터 목록이 아직 준비되지 않았습니다."; return false; }
-    if (!ReadDword(processId, imageBase, header, node, error)) return false;
-    if (!node) { error = L"주변 캐릭터 목록이 아직 준비되지 않았습니다."; return false; }
-    if (!ReadDword(processId, imageBase, static_cast<uintptr_t>(node) + 0x14, object, error)) return false;
-    if (!object)
-    {
-        error = L"상대방 구조체 포인터를 읽을 수 없습니다.";
-        return false;
-    }
-    const uintptr_t address = object;
-    if (coordinates)
-    {
-        uint32_t packed = 0;
-        if (!ReadDword(processId, imageBase, address + 0x0C, packed, error)) return false;
-        value = std::to_wstring(packed & 0xFFFFu) + L", " + std::to_wstring(packed >> 16);
-        return true;
-    }
-    TextRequest nameRequest{Version, sizeof(TextRequest), processId,
-                            address + 0x544 - imageBase, 1, 0};
-    TextResponse nameResponse{};
-    if (!DarkEdenClient::ReadText(processId, nameRequest, nameResponse, error)) return false;
-    value = DecodeText(nameResponse, 1);
-    if (value.empty())
-    {
-        error = L"상대방 이름이 비어 있습니다.";
-        return false;
-    }
-    return true;
+    uint32_t first = 0, second = 0, third = 0;
+    if (!ReadDword(processId, imageBase, imageBase + DefaultYOffset, first, error)) return false;
+    if (!first) { error = L"Y 좌표 경로가 비어 있습니다."; return false; }
+    if (!ReadDword(processId, imageBase, static_cast<uintptr_t>(first) + 0x0C, second, error)) return false;
+    if (!second) { error = L"Y 좌표 경로가 비어 있습니다."; return false; }
+    if (!ReadDword(processId, imageBase, static_cast<uintptr_t>(second) + 0x44, third, error)) return false;
+    if (!third) { error = L"Y 좌표 경로가 비어 있습니다."; return false; }
+    // Y is at third+0x210; the adjacent 32-bit X value is at third+0x20C.
+    return ReadDword(processId, imageBase, static_cast<uintptr_t>(third) + 0x20C, value, error);
 }
 
 std::wstring JsonString(const std::wstring& value)
@@ -168,7 +141,7 @@ bool ReadNearbyCharacters(unsigned processId, std::wstring& json, std::wstring& 
     if (DarkEdenClient::ReadText(processId, ownRequest, ownResponse, ignored))
         ownName = DecodeText(ownResponse, 1);
 
-    struct Character { std::wstring name, race; uint32_t id, x, y; };
+    struct Character { std::wstring name, race, life; uint32_t id, x, y; };
     std::vector<Character> characters;
     std::vector<uint32_t> pending{root};
     std::set<uint32_t> seenNodes, seenActors;
@@ -212,6 +185,15 @@ bool ReadNearbyCharacters(unsigned processId, std::wstring& json, std::wstring& 
             else if (raceFlag == 0 && raceKind == 2) race = L"Vampire";
             else if (raceFlag == 0x63 && raceKind == 0) race = L"Slayer";
         }
+        std::wstring life = L"미확인";
+        uint32_t lifeFlag = 0;
+        std::wstring lifeError;
+        if (ReadDword(processId, imageBase, static_cast<uintptr_t>(actor) + 0x548,
+                      lifeFlag, lifeError))
+        {
+            if (lifeFlag == 1) life = L"생존";
+            else if (lifeFlag == 0) life = L"사망";
+        }
         std::wstring name;
         TextRequest nameRequest{Version, sizeof(TextRequest), processId,
                                 static_cast<uintptr_t>(actor) + 0x544 - imageBase, 1, 0};
@@ -219,7 +201,7 @@ bool ReadNearbyCharacters(unsigned processId, std::wstring& json, std::wstring& 
         if (DarkEdenClient::ReadText(processId, nameRequest, nameResponse, ignored) &&
             nameResponse.terminated && nameResponse.bytesRead > 0)
             name = DecodeText(nameResponse, 1, true);
-        characters.push_back({name, race, id, x, y});
+        characters.push_back({name, race, life, id, x, y});
     }
     if (characters.empty())
     { error = L"주변 캐릭터를 찾지 못했습니다. 게임 화면에 접속한 뒤 다시 시도하세요."; return false; }
@@ -236,7 +218,7 @@ bool ReadNearbyCharacters(unsigned processId, std::wstring& json, std::wstring& 
         { error = L"주변 캐릭터 목록이 출력 한도를 초과했습니다."; return false; }
         if (json.size() > 1) json += L",";
         json += L"{\"name\":" + JsonString(character.name) + L",\"race\":" +
-                JsonString(character.race) + L",\"id\":" +
+                JsonString(character.race) + L",\"life\":" + JsonString(character.life) + L",\"id\":" +
                 std::to_wstring(character.id) + L",\"x\":" + std::to_wstring(character.x) +
                 L",\"y\":" + std::to_wstring(character.y) + L"}";
     }
@@ -264,23 +246,22 @@ extern "C" __declspec(dllexport) int __stdcall DE_ReadValue(
             valueType == static_cast<unsigned>(DarkEdenValueType::Y))
         {
             const bool x = valueType == static_cast<unsigned>(DarkEdenValueType::X);
-            Request request{Version, sizeof(Request), processId,
-                x ? DefaultXOffset : DefaultYOffset, x ? Axis::X : Axis::Y,
-                4, ValueType::Int32, x ? 3u : 4u};
-            Response response{};
-            if (!Read(processId, request, response, error))
-            { CopyOutput(error, errorOutput, errorCapacity); return 2; }
-            value = FormatValue(x ? response.xBits : response.yBits, ValueType::Int32);
-        }
-        else if (valueType == static_cast<unsigned>(DarkEdenValueType::OtherCharacterCoordinates))
-        {
-            if (!ReadOtherCharacter(processId, true, value, error))
-            { CopyOutput(error, errorOutput, errorCapacity); return 2; }
-        }
-        else if (valueType == static_cast<unsigned>(DarkEdenValueType::OtherCharacterName))
-        {
-            if (!ReadOtherCharacter(processId, false, value, error))
-            { CopyOutput(error, errorOutput, errorCapacity); return 2; }
+            if (x)
+            {
+                uint32_t coordinate = 0;
+                if (!ReadOwnXFromYPath(processId, coordinate, error))
+                { CopyOutput(error, errorOutput, errorCapacity); return 2; }
+                value = std::to_wstring(static_cast<int32_t>(coordinate));
+            }
+            else
+            {
+                Request request{Version, sizeof(Request), processId,
+                    DefaultYOffset, Axis::Y, 4, ValueType::Int32, 4u};
+                Response response{};
+                if (!Read(processId, request, response, error))
+                { CopyOutput(error, errorOutput, errorCapacity); return 2; }
+                value = FormatValue(response.yBits, ValueType::Int32);
+            }
         }
         else if (valueType == static_cast<unsigned>(DarkEdenValueType::CharacterName))
         {
@@ -347,4 +328,21 @@ extern "C" __declspec(dllexport) int __stdcall DE_ListNearbyCharacters(
     }
     catch (...)
     { CopyOutput(L"주변 캐릭터 목록을 읽는 중 오류가 발생했습니다.", errorOutput, errorCapacity); return 4; }
+}
+
+extern "C" __declspec(dllexport) int __stdcall DE_SelectNearbyCharacter(
+    unsigned processId, unsigned characterId, wchar_t* errorOutput, unsigned errorCapacity)
+{
+    if (errorOutput && errorCapacity) errorOutput[0] = L'\0';
+    if (!processId || !characterId || characterId == 0xFFFFFFFFu ||
+        !errorOutput || !errorCapacity) return 1;
+    try
+    {
+        std::wstring error;
+        if (!DarkEdenClient::SelectNearbyTarget(processId, characterId, error))
+        { CopyOutput(error, errorOutput, errorCapacity); return 2; }
+        return 0;
+    }
+    catch (...)
+    { CopyOutput(L"캐릭터 선택 중 오류가 발생했습니다.", errorOutput, errorCapacity); return 3; }
 }

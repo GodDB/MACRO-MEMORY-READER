@@ -53,10 +53,12 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT, PIRP irp)
     using namespace DarkEdenProtocol;
     const auto stack = IoGetCurrentIrpStackLocation(irp);
     const auto command = stack->Parameters.DeviceIoControl.IoControlCode;
-    if (command != ReadCoordinates && command != ReadText)
+    if (command != ReadCoordinates && command != ReadText && command != SelectTarget)
         return Complete(irp, STATUS_INVALID_DEVICE_REQUEST);
-    const ULONG requestSize = command == ReadText ? sizeof(TextRequest) : sizeof(Request);
-    const ULONG responseSize = command == ReadText ? sizeof(TextResponse) : sizeof(Response);
+    const ULONG requestSize = command == ReadText ? sizeof(TextRequest) :
+        command == SelectTarget ? sizeof(SelectTargetRequest) : sizeof(Request);
+    const ULONG responseSize = command == ReadText ? sizeof(TextResponse) :
+        command == SelectTarget ? sizeof(SelectTargetResponse) : sizeof(Response);
     if (stack->Parameters.DeviceIoControl.InputBufferLength != requestSize ||
         stack->Parameters.DeviceIoControl.OutputBufferLength < responseSize ||
         irp->AssociatedIrp.SystemBuffer == nullptr)
@@ -75,6 +77,16 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT, PIRP irp)
         if (!ValidTextRequest(request)) return Complete(irp, STATUS_INVALID_PARAMETER);
         TextResponse response{};
         ExecuteDarkEdenTextRequest(request, response);
+        RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &response, sizeof(response));
+        return Complete(irp, STATUS_SUCCESS, sizeof(response));
+    }
+    if (command == SelectTarget)
+    {
+        const SelectTargetRequest request = *static_cast<const SelectTargetRequest*>(irp->AssociatedIrp.SystemBuffer);
+        if (request.version != Version) return Complete(irp, STATUS_REVISION_MISMATCH);
+        if (!ValidSelectTargetRequest(request)) return Complete(irp, STATUS_INVALID_PARAMETER);
+        SelectTargetResponse response{};
+        ExecuteSelectTargetRequest(request, response);
         RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &response, sizeof(response));
         return Complete(irp, STATUS_SUCCESS, sizeof(response));
     }
